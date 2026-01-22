@@ -189,47 +189,51 @@ async def generate_dream_summary(
             # 第五步：根据配置决定是否将梦境发送给指定用户
             try:
                 dream_send_raw = getattr(global_config.dream, "dream_send", "") or ""
-                dream_send = dream_send_raw.strip()
-                if dream_send:
-                    parts = dream_send.split(":")
-                    if len(parts) != 2:
-                        logger.warning(
-                            f"[dream][梦境总结] dream_send 配置格式不正确，应为 'platform:user_id'，当前值: {dream_send_raw!r}"
-                        )
-                    else:
-                        platform, user_id = parts[0].strip(), parts[1].strip()
-                        if not platform or not user_id:
+                dream_send_list = json.loads(dream_send_raw.strip())
+                if not isinstance(dream_send_list, list) or not dream_send_list:
+                    return
+                for dream_send in dream_send_list:
+                    if dream_send:
+                        parts = dream_send.split(":")
+                        if len(parts) != 2:
                             logger.warning(
-                                f"[dream][梦境总结] dream_send 平台或用户ID为空，当前值: {dream_send_raw!r}"
+                                f"[dream][梦境总结] dream_send 配置格式不正确，应为 'platform:user_id'，当前值: {dream_send_raw!r}"
                             )
                         else:
-                            # 默认为私聊会话
-                            stream_id = get_chat_manager().get_stream_id(
-                                platform=platform,
-                                id=str(user_id),
-                                is_group=False,
-                            )
-                            if not stream_id:
-                                logger.error(
-                                    f"[dream][梦境总结] 无法根据 dream_send 找到有效的聊天流，"
-                                    f"platform={platform!r}, user_id={user_id!r}"
+                            platform, user_id = parts[0].strip(), parts[1].strip()
+                            if not platform or not user_id:
+                                logger.warning(
+                                    f"[dream][梦境总结] dream_send 平台或用户ID为空，当前值: {dream_send_raw!r}"
                                 )
                             else:
-                                dream_visible = global_config.dream.dream_visible
-                                ok = await send_api.text_to_stream(
-                                    dream_content,
-                                    stream_id=stream_id,
-                                    typing=False,
-                                    storage_message=dream_visible,
+                                # 默认为私聊会话
+                                stream_id = get_chat_manager().get_stream_id(
+                                    platform=platform,
+                                    id=str(user_id),
+                                    is_group=False,
                                 )
-                                if ok:
-                                    logger.info(
-                                        f"[dream][梦境总结] 已将梦境结果发送给配置的目标用户: {platform}:{user_id}"
+                                if not stream_id:
+                                    logger.error(
+                                        f"[dream][梦境总结] 无法根据 dream_send 找到有效的聊天流，"
+                                        f"platform={platform!r}, user_id={user_id!r}"
                                     )
                                 else:
-                                    logger.error(
-                                        f"[dream][梦境总结] 向 {platform}:{user_id} 发送梦境结果失败"
+                                    dream_visible = global_config.dream.dream_visible
+                                    ok = await send_api.text_to_stream(
+                                        dream_content,
+                                        stream_id=stream_id,
+                                        typing=False,
+                                        storage_message=dream_visible,
                                     )
+                                    if ok:
+                                        logger.info(
+                                            f"[dream][梦境总结] 已将梦境结果发送给配置的目标用户: {platform}:{user_id}"
+                                        )
+                                    else:
+                                        logger.error(
+                                            f"[dream][梦境总结] 向 {platform}:{user_id} 发送梦境结果失败"
+                                        )
+
             except Exception as send_exc:
                 logger.error(f"[dream][梦境总结] 发送梦境结果到配置用户时出错: {send_exc}", exc_info=True)
         else:
