@@ -1,12 +1,12 @@
 import random
 from typing import List, Optional
 
+from src.chat.message_receive.chat_stream import get_chat_manager
+from src.chat.utils.prompt_builder import Prompt
 from src.common.logger import get_logger
 from src.config.config import global_config, model_config
-from src.chat.utils.prompt_builder import Prompt
 from src.llm_models.payload_content.message import RoleType, Message
 from src.llm_models.utils_model import LLMRequest
-from src.chat.message_receive.chat_stream import get_chat_manager
 from src.plugin_system.apis import send_api
 
 logger = get_logger("dream_generator")
@@ -44,6 +44,7 @@ def get_random_dream_styles(count: int = 2) -> List[str]:
     """从梦境风格列表中随机选择指定数量的风格"""
     return random.sample(DREAM_STYLES, min(count, len(DREAM_STYLES)))
 
+
 def init_dream_summary_prompt() -> None:
     """初始化梦境总结的提示词"""
     Prompt(
@@ -67,10 +68,10 @@ def init_dream_summary_prompt() -> None:
 
 
 async def generate_dream_summary(
-    chat_id: str,
-    conversation_messages: List[Message],
-    total_iterations: int,
-    time_cost: float,
+        chat_id: str,
+        conversation_messages: List[Message],
+        total_iterations: int,
+        time_cost: float,
 ) -> None:
     """生成梦境总结，输出到日志，并根据配置可选地推送给指定用户"""
     try:
@@ -189,23 +190,22 @@ async def generate_dream_summary(
             # 第五步：根据配置决定是否将梦境发送给指定用户
             try:
                 dream_send_raw = getattr(global_config.dream, "dream_send", "") or ""
-                dream_send_list = json.loads(dream_send_raw.strip())
-                if not isinstance(dream_send_list, list) or not dream_send_list:
-                    return
-                for dream_send in dream_send_list:
-                    if dream_send:
-                        parts = dream_send.split(":")
-                        if len(parts) != 2:
+                dream_send = dream_send_raw.strip()
+                if dream_send:
+                    parts = dream_send.split(":")
+                    if len(parts) != 2:
+                        logger.warning(
+                            f"[dream][梦境总结] dream_send 配置格式不正确，应为 'platform:user_id'，当前值: {dream_send_raw!r}"
+                        )
+                    else:
+                        platform, user_id_list_raw = parts[0].strip(), parts[1].strip()
+                        user_id_list = json.loads(user_id_list_raw)
+                        if not platform or not user_id_list:
                             logger.warning(
-                                f"[dream][梦境总结] dream_send 配置格式不正确，应为 'platform:user_id'，当前值: {dream_send_raw!r}"
+                                f"[dream][梦境总结] dream_send 平台或用户ID为空，当前值: {dream_send_raw!r}"
                             )
                         else:
-                            platform, user_id = parts[0].strip(), parts[1].strip()
-                            if not platform or not user_id:
-                                logger.warning(
-                                    f"[dream][梦境总结] dream_send 平台或用户ID为空，当前值: {dream_send_raw!r}"
-                                )
-                            else:
+                            for user_id in user_id_list:
                                 # 默认为私聊会话
                                 stream_id = get_chat_manager().get_stream_id(
                                     platform=platform,
@@ -233,7 +233,6 @@ async def generate_dream_summary(
                                         logger.error(
                                             f"[dream][梦境总结] 向 {platform}:{user_id} 发送梦境结果失败"
                                         )
-
             except Exception as send_exc:
                 logger.error(f"[dream][梦境总结] 发送梦境结果到配置用户时出错: {send_exc}", exc_info=True)
         else:
