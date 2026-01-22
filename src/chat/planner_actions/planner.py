@@ -48,8 +48,8 @@ def init_prompt():
 reply
 动作描述：
 1.你可以选择呼叫了你的名字，但是你没有做出回应的消息进行回复
-2.你可以自然的顺着正在进行的聊天内容进行回复或自然的提出一个问题
-3.最好一次对一个话题进行回复，免得啰嗦或者回复内容太乱。
+2.你可以自然的顺着正在进行的聊天内容进行回复
+3.一次对一个话题进行回复，免得啰嗦或者回复内容太乱。
 4.不要选择回复你自己发送的消息
 5.不要单独对表情包进行回复
 6.将上下文中所有含义不明的，疑似黑话的，缩写词均写入unknown_words中
@@ -511,7 +511,7 @@ class ActionPlanner:
             action_options_block = await self._build_action_options_block(current_available_actions)
 
             # 其他信息
-            moderation_prompt_block = "请不要输出违法违规内容，不要输出色情，暴力，政治相关内容，如有敏感内容，请规避。"
+            moderation_prompt_block = ""
             time_block = f"当前时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
             bot_name = global_config.bot.nickname
             bot_nickname = (

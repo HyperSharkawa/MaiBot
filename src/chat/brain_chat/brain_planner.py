@@ -52,7 +52,7 @@ def init_prompt():
 **可用的action**
 reply
 动作描述：
-进行回复，你可以自然的顺着正在进行的聊天内容进行回复或自然的提出一个问题
+进行回复，你可以自然的顺着正在进行的聊天内容进行回复
 {{
     "action": "reply",
     "target_message_id":"想要回复的消息id",
@@ -383,7 +383,7 @@ class BrainPlanner:
             action_options_block = await self._build_action_options_block(current_available_actions)
 
             # 其他信息
-            moderation_prompt_block = "请不要输出违法违规内容，不要输出色情，暴力，政治相关内容，如有敏感内容，请规避。"
+            moderation_prompt_block = ""
             time_block = f"当前时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
             bot_name = global_config.bot.nickname
             bot_nickname = (
