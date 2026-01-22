@@ -267,7 +267,7 @@ class LLMRequest:
 
     def _select_model(self, exclude_models: Optional[Set[str]] = None) -> Tuple[ModelInfo, APIProvider, BaseClient]:
         """
-        根据配置的策略选择模型：balance（负载均衡）或 random（随机选择）
+        根据配置的策略选择模型：balance（负载均衡）、random（随机选择）或 priority（按优先级顺序）
         """
         available_models = {
             model: scores
@@ -282,6 +282,9 @@ class LLMRequest:
         if strategy == "random":
             # 随机选择策略
             selected_model_name = random.choice(list(available_models.keys()))
+        elif strategy == "priority":
+            # 按优先级选择策略：永远选择列表中的第一个可用模型
+            selected_model_name = next(iter(available_models))
         elif strategy == "balance":
             # 负载均衡策略：根据总tokens和惩罚值选择
             selected_model_name = min(
