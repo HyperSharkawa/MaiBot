@@ -1,16 +1,16 @@
 import re
 import traceback
-
 from typing import TYPE_CHECKING
 
+from src.chat.brain_chat.brain_chat import BrainChatting
+from src.chat.heart_flow.heartflow import heartflow
 from src.chat.message_receive.message import MessageRecv
 from src.chat.message_receive.storage import MessageStorage
-from src.chat.heart_flow.heartflow import heartflow
-from src.chat.utils.utils import is_mentioned_bot_in_message
 from src.chat.utils.chat_message_builder import replace_user_references
+from src.chat.utils.utils import is_mentioned_bot_in_message
+from src.common.database.database_model import Images
 from src.common.logger import get_logger
 from src.person_info.person_info import Person
-from src.common.database.database_model import Images
 
 if TYPE_CHECKING:
     pass
@@ -57,7 +57,10 @@ class HeartFCMessageReceiver:
 
             await self.storage.store_message(message, chat)
 
-            await heartflow.get_or_create_heartflow_chat(chat.stream_id)  # type: ignore
+            heartflow_instance = await heartflow.get_or_create_heartflow_chat(chat.stream_id)  # type: ignore
+            if isinstance(heartflow_instance, BrainChatting):
+                heartflow_instance._new_message_event.set()
+                logger.info(f"已通知 BrainChatting 处理新消息，chat_id={chat.stream_id}")
 
             # 3. 日志记录
             mes_name = chat.group_info.group_name if chat.group_info else "私聊"
