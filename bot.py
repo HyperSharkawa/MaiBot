@@ -1,15 +1,17 @@
 import asyncio
 import hashlib
 import os
-import time
 import platform
-import traceback
 import shutil
-import sys
 import subprocess
-from dotenv import load_dotenv
+import sys
+import time
+import traceback
 from pathlib import Path
+
+from dotenv import load_dotenv
 from rich.traceback import install
+
 from src.common.logger import initialize_logging, get_logger, shutdown_logging
 
 # 设置工作目录为脚本所在目录
@@ -45,6 +47,33 @@ logger = get_logger("main")
 RESTART_EXIT_CODE = 42
 
 
+def setup_child_process():
+    """
+    子进程启动时的设置函数
+    使用 prctl 设置 PR_SET_PDEATHSIG，使得当父进程死亡时，子进程会收到指定的信号
+    防止父进程被强制杀死（SIGKILL）时，子进程变成孤儿进程
+    """
+    try:
+        import ctypes
+        import signal as sig
+
+        # libc 中的 prctl 函数常数
+        PR_SET_PDEATHSIG = 1
+
+        # 获取 libc
+        libc = ctypes.CDLL(None)
+        prctl = libc.prctl
+        prctl.argtypes = [ctypes.c_int, ctypes.c_long]
+        prctl.restype = ctypes.c_int
+
+        # 设置当父进程死亡时，子进程接收 SIGTERM 信号
+        result = prctl(PR_SET_PDEATHSIG, sig.SIGTERM)
+        if result != 0:
+            logger.warning("设置 PR_SET_PDEATHSIG 失败")
+    except Exception as e:
+        logger.warning(f"设置进程死亡信号失败: {e}")
+
+
 def run_runner_process():
     """
     Runner 进程逻辑：作为守护进程运行，负责启动和监控 Worker 进程。
@@ -59,13 +88,15 @@ def run_runner_process():
 
     while True:
         logger.info(f"正在启动 {script_file}...")
-        logger.info("正在编译着色器：1/114514")
 
         # 启动子进程 (Worker)
         # 使用 sys.executable 确保使用相同的 Python 解释器
         cmd = [python_executable, script_file] + sys.argv[1:]
 
-        process = subprocess.Popen(cmd, env=env)
+        if sys.platform == "linux":
+            process = subprocess.Popen(cmd, env=env, preexec_fn=setup_child_process)
+        else:
+            process = subprocess.Popen(cmd, env=env)
 
         try:
             # 等待子进程结束
@@ -113,7 +144,6 @@ if os.environ.get("MAIBOT_WORKER_PROCESS") != "1":
 from src.main import MainSystem  # noqa
 from src.manager.async_task_manager import async_task_manager  # noqa
 
-
 # logger = get_logger("main")
 
 
@@ -124,7 +154,6 @@ from src.manager.async_task_manager import async_task_manager  # noqa
 # os.chdir(script_dir)
 logger.info(f"已设置工作目录为: {script_dir}")
 
-
 confirm_logger = get_logger("confirm")
 # 获取没有加载env时的环境变量
 env_mask = {key: os.getenv(key) for key in os.environ}
@@ -133,6 +162,7 @@ uvicorn_server = None
 driver = None
 app = None
 loop = None
+main_tasks = None
 
 
 def print_opensource_notice():
@@ -319,6 +349,13 @@ def raw_main():
     return MainSystem()
 
 
+def stop_worker():
+    """工作进程停止回调"""
+    if main_tasks and not main_tasks.done():
+        logger.warning("收到停止信号，正在优雅关闭...")
+        main_tasks.cancel()
+
+
 if __name__ == "__main__":
     exit_code = 0  # 用于记录程序最终的退出状态
     try:
@@ -334,6 +371,13 @@ if __name__ == "__main__":
 
         initialize_ws_handler(loop)
 
+        # 在 Linux 上添加终止信号处理器
+        if sys.platform == "linux":
+            import signal
+
+            for sig in (signal.SIGTERM, signal.SIGINT):
+                loop.add_signal_handler(sig, stop_worker)
+
         try:
             # 执行初始化和任务调度
             loop.run_until_complete(main_system.initialize())
@@ -341,25 +385,18 @@ if __name__ == "__main__":
             # We can run console_input_loop concurrently.
             main_tasks = loop.create_task(main_system.schedule_tasks())
             loop.run_until_complete(main_tasks)
-
         except KeyboardInterrupt:
-            logger.warning("收到中断信号，正在优雅关闭...")
-
-            # 取消主任务
+            logger.warning("Ctrl+C 被按下，正在优雅关闭...")
             if "main_tasks" in locals() and main_tasks and not main_tasks.done():
                 main_tasks.cancel()
                 try:
                     loop.run_until_complete(main_tasks)
                 except asyncio.CancelledError:
                     pass
-
-            # 执行优雅关闭
-            if loop and not loop.is_closed():
-                try:
-                    loop.run_until_complete(graceful_shutdown())
-                except Exception as ge:
-                    logger.error(f"优雅关闭时发生错误: {ge}")
-        # 新增：检测外部请求关闭
+        except asyncio.CancelledError:
+            # 当接收到取消信号时，stop_worker 回调将会执行并取消 main_tasks
+            # 然后会在此处抛出 asyncio.CancelledError
+            pass
 
     except SystemExit as e:
         # 捕获 SystemExit (例如 sys.exit()) 并保留退出代码
@@ -376,6 +413,10 @@ if __name__ == "__main__":
     finally:
         # 确保 loop 在任何情况下都尝试关闭（如果存在且未关闭）
         if "loop" in locals() and loop and not loop.is_closed():
+            try:
+                loop.run_until_complete(graceful_shutdown())
+            except Exception as ge:
+                logger.error(f"优雅关闭时发生错误: {ge}")
             loop.close()
             print("[主程序] 事件循环已关闭")
 
