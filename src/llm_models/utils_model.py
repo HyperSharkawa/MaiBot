@@ -11,7 +11,7 @@ import traceback
 from src.common.logger import get_logger
 from src.config.config import model_config
 from src.config.api_ada_configs import APIProvider, ModelInfo, TaskConfig
-from .payload_content.message import MessageBuilder, Message
+from .payload_content.message import MessageBuilder, Message, RoleType
 from .payload_content.resp_format import RespFormat
 from .payload_content.tool_option import ToolOption, ToolCall, ToolOptionBuilder, ToolParamType
 from .model_client.base_client import BaseClient, APIResponse, client_registry
@@ -83,12 +83,13 @@ class LLMRequest:
         start_time = time.time()
 
         def message_factory(client: BaseClient) -> List[Message]:
-            message_builder = MessageBuilder()
-            message_builder.add_text_content(prompt)
-            message_builder.add_image_content(
+            system_message = MessageBuilder().set_role(RoleType.System).add_text_content(prompt).build()
+
+            user_message_builder = MessageBuilder().set_role(RoleType.User)
+            user_message_builder.add_image_content(
                 image_base64=image_base64, image_format=image_format, support_formats=client.get_support_image_formats()
             )
-            return [message_builder.build()]
+            return [system_message, user_message_builder.build()]
 
         response, model_info = await self._execute_request(
             request_type=RequestType.RESPONSE,
