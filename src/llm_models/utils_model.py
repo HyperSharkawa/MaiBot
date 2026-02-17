@@ -1,27 +1,27 @@
-import re
 import asyncio
-import time
 import random
-
-from enum import Enum
-from rich.traceback import install
-from typing import Tuple, List, Dict, Optional, Callable, Any, Set
+import re
+import time
 import traceback
+from enum import Enum
+from typing import Tuple, List, Dict, Optional, Callable, Any, Set
+
+from rich.traceback import install
 
 from src.common.logger import get_logger
-from src.config.config import model_config
 from src.config.api_ada_configs import APIProvider, ModelInfo, TaskConfig
-from .payload_content.message import MessageBuilder, Message, RoleType
-from .payload_content.resp_format import RespFormat
-from .payload_content.tool_option import ToolOption, ToolCall, ToolOptionBuilder, ToolParamType
-from .model_client.base_client import BaseClient, APIResponse, client_registry
-from .utils import compress_messages, llm_usage_recorder
+from src.config.config import model_config
 from .exceptions import (
     NetworkConnectionError,
     RespNotOkException,
     EmptyResponseException,
     ModelAttemptFailed,
 )
+from .model_client.base_client import BaseClient, APIResponse, client_registry
+from .payload_content.message import MessageBuilder, Message, RoleType
+from .payload_content.resp_format import RespFormat
+from .payload_content.tool_option import ToolOption, ToolCall, ToolOptionBuilder, ToolParamType
+from .utils import compress_messages, llm_usage_recorder
 
 install(extra_lines=3)
 
@@ -64,12 +64,12 @@ class LLMRequest:
             )
 
     async def generate_response_for_image(
-        self,
-        prompt: str,
-        image_base64: str,
-        image_format: str,
-        temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None,
+            self,
+            prompt: str,
+            image_base64: str,
+            image_format: str,
+            temperature: Optional[float] = None,
+            max_tokens: Optional[int] = None,
     ) -> Tuple[str, Tuple[str, str, Optional[List[ToolCall]]]]:
         """
         为图像生成响应
@@ -131,12 +131,12 @@ class LLMRequest:
         return response.content or None
 
     async def generate_response_async(
-        self,
-        prompt: str,
-        temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        raise_when_empty: bool = True,
+            self,
+            prompt: str,
+            temperature: Optional[float] = None,
+            max_tokens: Optional[int] = None,
+            tools: Optional[List[Dict[str, Any]]] = None,
+            raise_when_empty: bool = True,
     ) -> Tuple[str, Tuple[str, str, Optional[List[ToolCall]]]]:
         """
         异步生成响应
@@ -187,12 +187,12 @@ class LLMRequest:
         return content or "", (reasoning_content, model_info.name, tool_calls)
 
     async def generate_response_with_message_async(
-        self,
-        message_factory: Callable[[BaseClient], List[Message]],
-        temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        raise_when_empty: bool = True,
+            self,
+            message_factory: Callable[[BaseClient], List[Message]],
+            temperature: Optional[float] = None,
+            max_tokens: Optional[int] = None,
+            tools: Optional[List[Dict[str, Any]]] = None,
+            raise_when_empty: bool = True,
     ) -> Tuple[str, Tuple[str, str, Optional[List[ToolCall]]]]:
         """
         异步生成响应
@@ -279,7 +279,7 @@ class LLMRequest:
             raise RuntimeError("没有可用的模型可供选择。所有模型均已尝试失败。")
 
         strategy = self.model_for_task.selection_strategy.lower()
-        
+
         if strategy == "random":
             # 随机选择策略
             selected_model_name = random.choice(list(available_models.keys()))
@@ -299,7 +299,7 @@ class LLMRequest:
                 available_models,
                 key=lambda k: available_models[k][0] + available_models[k][1] * 300 + available_models[k][2] * 1000,
             )
-        
+
         model_info = model_config.get_model_info(selected_model_name)
         api_provider = model_config.get_provider(model_info.api_provider)
         force_new_client = self.request_type == "embedding"
@@ -310,20 +310,20 @@ class LLMRequest:
         return model_info, api_provider, client
 
     async def _attempt_request_on_model(
-        self,
-        model_info: ModelInfo,
-        api_provider: APIProvider,
-        client: BaseClient,
-        request_type: RequestType,
-        message_list: List[Message],
-        tool_options: list[ToolOption] | None,
-        response_format: RespFormat | None,
-        stream_response_handler: Optional[Callable],
-        async_response_parser: Optional[Callable],
-        temperature: Optional[float],
-        max_tokens: Optional[int],
-        embedding_input: str | None,
-        audio_base64: str | None,
+            self,
+            model_info: ModelInfo,
+            api_provider: APIProvider,
+            client: BaseClient,
+            request_type: RequestType,
+            message_list: List[Message],
+            tool_options: list[ToolOption] | None,
+            response_format: RespFormat | None,
+            stream_response_handler: Optional[Callable],
+            async_response_parser: Optional[Callable],
+            temperature: Optional[float],
+            max_tokens: Optional[int],
+            embedding_input: str | None,
+            audio_base64: str | None,
     ) -> APIResponse:
         """
         在单个模型上执行请求，包含针对临时错误的重试逻辑。
@@ -449,17 +449,17 @@ class LLMRequest:
         raise ModelAttemptFailed(f"模型 '{model_info.name}' 未被尝试，因为重试次数已配置为0或更少。")
 
     async def _execute_request(
-        self,
-        request_type: RequestType,
-        message_factory: Optional[Callable[[BaseClient], List[Message]]] = None,
-        tool_options: list[ToolOption] | None = None,
-        response_format: RespFormat | None = None,
-        stream_response_handler: Optional[Callable] = None,
-        async_response_parser: Optional[Callable] = None,
-        temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None,
-        embedding_input: str | None = None,
-        audio_base64: str | None = None,
+            self,
+            request_type: RequestType,
+            message_factory: Optional[Callable[[BaseClient], List[Message]]] = None,
+            tool_options: list[ToolOption] | None = None,
+            response_format: RespFormat | None = None,
+            stream_response_handler: Optional[Callable] = None,
+            async_response_parser: Optional[Callable] = None,
+            temperature: Optional[float] = None,
+            max_tokens: Optional[int] = None,
+            embedding_input: str | None = None,
+            audio_base64: str | None = None,
     ) -> Tuple[APIResponse, ModelInfo]:
         """
         调度器函数，负责模型选择、故障切换。
@@ -554,9 +554,16 @@ class LLMRequest:
     def _extract_reasoning(content: str) -> Tuple[str, str]:
         """CoT思维链提取，向后兼容"""
         match = re.search(r"(?:<think>)?(.*?)</think>", content, re.DOTALL)
-        content = re.sub(r"(?:<think>)?.*?</think>", "", content, flags=re.DOTALL, count=1).strip()
-        reasoning = match[1].strip() if match else ""
-        return content, reasoning
+        if match:
+            content = re.sub(r"(?:<think>)?.*?</think>", "", content, flags=re.DOTALL, count=1).strip()
+            reasoning = match[1].strip()
+            return content, reasoning
+        match = re.search(r"(?:<thinking>)?(.*?)</thinking>", content, re.DOTALL)
+        if match:
+            content = re.sub(r"(?:<thinking>)?.*?</thinking>", "", content, flags=re.DOTALL, count=1).strip()
+            reasoning = match[1].strip()
+            return content, reasoning
+        return content, ""
 
     @staticmethod
     def _get_original_error_info(e: Exception) -> str:

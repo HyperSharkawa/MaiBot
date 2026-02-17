@@ -383,7 +383,7 @@ async def _default_stream_response_handler(
 
 
 pattern = re.compile(
-    r"<think>(?P<think>.*?)</think>(?P<content>.*)|<think>(?P<think_unclosed>.*)|(?P<content_only>.+)",
+    r"<(think|thinking)>(?P<think>.*?)</(think|thinking)>(?P<content>.*)|<(think|thinking)>(?P<think_unclosed>.*)|(?P<content_only>.+)",
     re.DOTALL,
 )
 """用于解析推理内容的正则表达式"""
