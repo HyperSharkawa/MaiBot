@@ -132,7 +132,7 @@ class LLMRequest:
 
     async def generate_response_async(
             self,
-            prompt: str,
+            prompt: str | Tuple[str, str],
             temperature: Optional[float] = None,
             max_tokens: Optional[int] = None,
             tools: Optional[List[Dict[str, Any]]] = None,
@@ -152,9 +152,16 @@ class LLMRequest:
         start_time = time.time()
 
         def message_factory(client: BaseClient) -> List[Message]:
-            message_builder = MessageBuilder()
-            message_builder.add_text_content(prompt)
-            return [message_builder.build()]
+            if isinstance(prompt,str):
+                message_builder = MessageBuilder()
+                message_builder.add_text_content(prompt)
+                return [message_builder.build()]
+            elif isinstance(prompt, tuple) and len(prompt) == 2:
+                system_message = MessageBuilder().set_role(RoleType.System).add_text_content(prompt[0]).build()
+                user_message = MessageBuilder().set_role(RoleType.User).add_text_content(prompt[1]).build()
+                return [system_message, user_message]
+            else:
+                raise ValueError("提示词必须是字符串或包含两个字符串的元组")
 
         tool_built = self._build_tool_options(tools)
 
