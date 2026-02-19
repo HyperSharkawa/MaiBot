@@ -1,57 +1,54 @@
-import traceback
-import time
 import asyncio
 import random
 import re
-
-from typing import List, Optional, Dict, Any, Tuple
+import time
+import traceback
 from datetime import datetime
-from src.common.logger import get_logger
-from src.common.data_models.database_data_model import DatabaseMessages
-from src.common.data_models.info_data_model import ActionPlannerInfo
-from src.common.data_models.llm_data_model import LLMGenerationDataModel
-from src.config.config import global_config, model_config
-from src.llm_models.utils_model import LLMRequest
-from src.chat.message_receive.message import UserInfo, Seg, MessageRecv, MessageSending
+from typing import List, Optional, Dict, Any, Tuple
+
+from src.bw_learner.expression_selector import expression_selector
+from src.bw_learner.jargon_explainer import explain_jargon_in_context
 from src.chat.message_receive.chat_stream import ChatStream
+from src.chat.message_receive.message import UserInfo, Seg, MessageRecv, MessageSending
 from src.chat.message_receive.uni_message_sender import UniversalMessageSender
-from src.chat.utils.timer_calculator import Timer  # <--- Import Timer
-from src.chat.utils.utils import get_chat_type_and_target_info, is_bot_self
-from src.chat.utils.prompt_builder import global_prompt_manager
+from src.chat.replyer.prompt.lpmm_prompt import init_lpmm_prompt
+from src.chat.replyer.prompt.replyer_private_prompt import init_replyer_private_prompt
+from src.chat.replyer.prompt.rewrite_prompt import init_rewrite_prompt
 from src.chat.utils.chat_message_builder import (
     build_readable_messages,
     get_raw_msg_before_timestamp_with_chat,
     replace_user_references,
 )
-from src.bw_learner.expression_selector import expression_selector
+from src.chat.utils.prompt_builder import global_prompt_manager
+from src.chat.utils.timer_calculator import Timer  # <--- Import Timer
+from src.chat.utils.utils import get_chat_type_and_target_info, is_bot_self
+from src.common.data_models.database_data_model import DatabaseMessages
+from src.common.data_models.info_data_model import ActionPlannerInfo
+from src.common.data_models.llm_data_model import LLMGenerationDataModel
+from src.common.logger import get_logger
+from src.config.config import global_config, model_config
+from src.llm_models.utils_model import LLMRequest
+from src.memory_system.memory_retrieval import init_memory_retrieval_prompt, build_memory_retrieval_prompt
+from src.person_info.person_info import Person, is_person_known
+from src.plugin_system.apis import llm_api
 from src.plugin_system.apis.message_api import translate_pid_to_description
+from src.plugin_system.base.component_types import ActionInfo, EventType
 
 # from src.memory_system.memory_activator import MemoryActivator
-
-from src.person_info.person_info import Person, is_person_known
-from src.plugin_system.base.component_types import ActionInfo, EventType
-from src.plugin_system.apis import llm_api
-
-from src.chat.replyer.prompt.lpmm_prompt import init_lpmm_prompt
-from src.chat.replyer.prompt.replyer_private_prompt import init_replyer_private_prompt
-from src.chat.replyer.prompt.rewrite_prompt import init_rewrite_prompt
-from src.memory_system.memory_retrieval import init_memory_retrieval_prompt, build_memory_retrieval_prompt
-from src.bw_learner.jargon_explainer import explain_jargon_in_context
 
 init_lpmm_prompt()
 init_replyer_private_prompt()
 init_rewrite_prompt()
 init_memory_retrieval_prompt()
 
-
 logger = get_logger("replyer")
 
 
 class PrivateReplyer:
     def __init__(
-        self,
-        chat_stream: ChatStream,
-        request_type: str = "replyer",
+            self,
+            chat_stream: ChatStream,
+            request_type: str = "replyer",
     ):
         self.express_model = LLMRequest(model_set=model_config.model_task_config.replyer, request_type=request_type)
         self.chat_stream = chat_stream
@@ -64,19 +61,19 @@ class PrivateReplyer:
         self.tool_executor = ToolExecutor(chat_id=self.chat_stream.stream_id, enable_cache=True, cache_ttl=3)
 
     async def generate_reply_with_context(
-        self,
-        extra_info: str = "",
-        reply_reason: str = "",
-        available_actions: Optional[Dict[str, ActionInfo]] = None,
-        chosen_actions: Optional[List[ActionPlannerInfo]] = None,
-        enable_tool: bool = True,
-        from_plugin: bool = True,
-        think_level: int = 1,
-        stream_id: Optional[str] = None,
-        reply_message: Optional[DatabaseMessages] = None,
-        reply_time_point: Optional[float] = time.time(),
-        unknown_words: Optional[List[str]] = None,
-        log_reply: bool = True,
+            self,
+            extra_info: str = "",
+            reply_reason: str = "",
+            available_actions: Optional[Dict[str, ActionInfo]] = None,
+            chosen_actions: Optional[List[ActionPlannerInfo]] = None,
+            enable_tool: bool = True,
+            from_plugin: bool = True,
+            think_level: int = 1,
+            stream_id: Optional[str] = None,
+            reply_message: Optional[DatabaseMessages] = None,
+            reply_time_point: Optional[float] = time.time(),
+            unknown_words: Optional[List[str]] = None,
+            log_reply: bool = True,
     ) -> Tuple[bool, LLMGenerationDataModel]:
         # sourcery skip: merge-nested-ifs
         """
@@ -102,6 +99,7 @@ class PrivateReplyer:
             available_actions = {}
         try:
             # 3. 构建 Prompt
+            prompt: Tuple[str, str]
             with Timer("构建Prompt", {}):  # 内部计时器，可选保留
                 prompt, selected_expressions = await self.build_prompt_reply_context(
                     extra_info=extra_info,
@@ -112,23 +110,25 @@ class PrivateReplyer:
                     reply_reason=reply_reason,
                     unknown_words=unknown_words,
                 )
-            llm_response.prompt = prompt
+            prompt_text = f"System Prompt:\n{prompt[0]}\n\nUser Prompt:\n{prompt[1]}"
+            llm_response.prompt = prompt_text
             llm_response.selected_expressions = selected_expressions
 
-            if not prompt:
+            if not prompt or not prompt[1]:
                 logger.warning("构建prompt失败，跳过回复生成")
                 return False, llm_response
             from src.plugin_system.core.events_manager import events_manager
 
             if not from_plugin:
                 continue_flag, modified_message = await events_manager.handle_mai_events(
-                    EventType.POST_LLM, None, prompt, None, stream_id=stream_id
+                    EventType.POST_LLM, None, prompt[1], None, stream_id=stream_id
                 )
                 if not continue_flag:
                     raise UserWarning("插件于请求前中断了内容生成")
                 if modified_message and modified_message._modify_flags.modify_llm_prompt:
-                    llm_response.prompt = modified_message.llm_prompt
-                    prompt = str(modified_message.llm_prompt)
+                    prompt[1] = str(modified_message.llm_prompt)
+                    prompt_text = f"System Prompt:\n{prompt[0]}\n\nUser Prompt:\n{prompt[1]}"
+                    llm_response.prompt = prompt_text
 
             # 4. 调用 LLM 生成回复
             content = None
@@ -143,7 +143,7 @@ class PrivateReplyer:
                 llm_response.model = model_name
                 llm_response.tool_calls = tool_call
                 continue_flag, modified_message = await events_manager.handle_mai_events(
-                    EventType.AFTER_LLM, None, prompt, llm_response, stream_id=stream_id
+                    EventType.AFTER_LLM, None, prompt[1], llm_response, stream_id=stream_id
                 )
                 if not from_plugin and not continue_flag:
                     raise UserWarning("插件于请求后取消了内容生成")
@@ -172,10 +172,10 @@ class PrivateReplyer:
             return False, llm_response
 
     async def rewrite_reply_with_context(
-        self,
-        raw_reply: str = "",
-        reason: str = "",
-        reply_to: str = "",
+            self,
+            raw_reply: str = "",
+            reason: str = "",
+            reply_to: str = "",
     ) -> Tuple[bool, LLMGenerationDataModel]:
         """
         表达器 (Expressor): 负责重写和优化回复文本。
@@ -246,7 +246,7 @@ class PrivateReplyer:
         return f"{sender_relation}"
 
     async def build_expression_habits(
-        self, chat_history: str, target: str, reply_reason: str = ""
+            self, chat_history: str, target: str, reply_reason: str = ""
     ) -> Tuple[str, List[int]]:
         # sourcery skip: for-append-to-extend
         """构建表达习惯块
@@ -475,7 +475,8 @@ class PrivateReplyer:
         return ""
 
     async def build_actions_prompt(
-        self, available_actions: Dict[str, ActionInfo], chosen_actions_info: Optional[List[ActionPlannerInfo]] = None
+            self, available_actions: Dict[str, ActionInfo],
+            chosen_actions_info: Optional[List[ActionPlannerInfo]] = None
     ) -> str:
         """构建动作提示"""
 
@@ -522,9 +523,9 @@ class PrivateReplyer:
 
         # 检查是否需要随机替换为状态
         if (
-            global_config.personality.states
-            and global_config.personality.state_probability > 0
-            and random.random() < global_config.personality.state_probability
+                global_config.personality.states
+                and global_config.personality.state_probability > 0
+                and random.random() < global_config.personality.state_probability
         ):
             # 随机选择一个状态替换personality
             selected_state = random.choice(global_config.personality.states)
@@ -605,15 +606,15 @@ class PrivateReplyer:
         return ""
 
     async def build_prompt_reply_context(
-        self,
-        reply_message: Optional[DatabaseMessages] = None,
-        extra_info: str = "",
-        reply_reason: str = "",
-        available_actions: Optional[Dict[str, ActionInfo]] = None,
-        chosen_actions: Optional[List[ActionPlannerInfo]] = None,
-        enable_tool: bool = True,
-        unknown_words: Optional[List[str]] = None,
-    ) -> Tuple[str, List[int]]:
+            self,
+            reply_message: Optional[DatabaseMessages] = None,
+            extra_info: str = "",
+            reply_reason: str = "",
+            available_actions: Optional[Dict[str, ActionInfo]] = None,
+            chosen_actions: Optional[List[ActionPlannerInfo]] = None,
+            enable_tool: bool = True,
+            unknown_words: Optional[List[str]] = None,
+    ) -> Tuple[Tuple[str, str], List[int]]:
         """
         构建回复器上下文
 
@@ -683,9 +684,9 @@ class PrivateReplyer:
             if is_bot_self(msg.user_info.platform, msg.user_info.user_id):
                 continue
             if (
-                reply_message
-                and reply_message.user_info.user_id == msg.user_info.user_id
-                and reply_message.user_info.platform == msg.user_info.platform
+                    reply_message
+                    and reply_message.user_info.user_id == msg.user_info.user_id
+                    and reply_message.user_info.platform == msg.user_info.platform
             ):
                 continue
             person = Person(platform=msg.user_info.platform, user_id=msg.user_info.user_id)
@@ -736,7 +737,8 @@ class PrivateReplyer:
             self._time_and_run_task(self.build_personality_prompt(), "personality_prompt"),
             self._time_and_run_task(
                 build_memory_retrieval_prompt(
-                    chat_talking_prompt_short, sender, target, self.chat_stream, think_level=1, unknown_words=unknown_words, question=question
+                    chat_talking_prompt_short, sender, target, self.chat_stream, think_level=1,
+                    unknown_words=unknown_words, question=question
                 ),
                 "memory_retrieval",
             ),
@@ -823,55 +825,65 @@ class PrivateReplyer:
 
         # 使用统一的 is_bot_self 函数判断是否是机器人自己（支持多平台，包括 WebUI）
         if is_bot_self(platform, user_id):
-            return await global_prompt_manager.format_prompt(
-                "private_replyer_self_prompt",
-                expression_habits_block=expression_habits_block,
-                tool_info_block=tool_info,
-                knowledge_prompt=prompt_info,
-                relation_info_block=relation_info,
-                extra_info_block=extra_info_block,
-                identity=personality_prompt,
-                action_descriptions=actions_info,
-                dialogue_prompt=dialogue_prompt,
-                jargon_explanation=jargon_explanation,
-                time_block=time_block,
-                target=target,
-                reason=reply_reason,
-                sender_name=sender,
-                reply_style=reply_style,
-                keywords_reaction_prompt=keywords_reaction_prompt,
-                moderation_prompt=moderation_prompt_block,
-                memory_retrieval=memory_retrieval,
-                chat_prompt=chat_prompt_block,
+            return (
+                await global_prompt_manager.format_prompt(
+                    "private_replyer_prompt_system",
+                    identity=personality_prompt,
+                    reply_style=reply_style
+                ),
+                await global_prompt_manager.format_prompt(
+                    "private_replyer_self_prompt",
+                    expression_habits_block=expression_habits_block,
+                    tool_info_block=tool_info,
+                    knowledge_prompt=prompt_info,
+                    relation_info_block=relation_info,
+                    extra_info_block=extra_info_block,
+                    action_descriptions=actions_info,
+                    dialogue_prompt=dialogue_prompt,
+                    jargon_explanation=jargon_explanation,
+                    time_block=time_block,
+                    target=target,
+                    reason=reply_reason,
+                    sender_name=sender,
+                    keywords_reaction_prompt=keywords_reaction_prompt,
+                    moderation_prompt=moderation_prompt_block,
+                    memory_retrieval=memory_retrieval,
+                    chat_prompt=chat_prompt_block,
+                )
             ), selected_expressions
         else:
-            return await global_prompt_manager.format_prompt(
-                "private_replyer_prompt",
-                expression_habits_block=expression_habits_block,
-                tool_info_block=tool_info,
-                knowledge_prompt=prompt_info,
-                relation_info_block=relation_info,
-                extra_info_block=extra_info_block,
-                identity=personality_prompt,
-                action_descriptions=actions_info,
-                dialogue_prompt=dialogue_prompt,
-                jargon_explanation=jargon_explanation,
-                time_block=time_block,
-                reply_target_block=reply_target_block,
-                reply_style=reply_style,
-                keywords_reaction_prompt=keywords_reaction_prompt,
-                moderation_prompt=moderation_prompt_block,
-                sender_name=sender,
-                memory_retrieval=memory_retrieval,
-                chat_prompt=chat_prompt_block,
-                planner_reasoning=planner_reasoning,
+            return (
+                await global_prompt_manager.format_prompt(
+                    "private_replyer_prompt_system",
+                    identity=personality_prompt,
+                    reply_style=reply_style
+                ),
+                await global_prompt_manager.format_prompt(
+                    "private_replyer_prompt",
+                    expression_habits_block=expression_habits_block,
+                    tool_info_block=tool_info,
+                    knowledge_prompt=prompt_info,
+                    relation_info_block=relation_info,
+                    extra_info_block=extra_info_block,
+                    action_descriptions=actions_info,
+                    dialogue_prompt=dialogue_prompt,
+                    jargon_explanation=jargon_explanation,
+                    time_block=time_block,
+                    reply_target_block=reply_target_block,
+                    keywords_reaction_prompt=keywords_reaction_prompt,
+                    moderation_prompt=moderation_prompt_block,
+                    sender_name=sender,
+                    memory_retrieval=memory_retrieval,
+                    chat_prompt=chat_prompt_block,
+                    planner_reasoning=planner_reasoning,
+                )
             ), selected_expressions
 
     async def build_prompt_rewrite_context(
-        self,
-        raw_reply: str,
-        reason: str,
-        reply_to: str,
+            self,
+            raw_reply: str,
+            reason: str,
+            reply_to: str,
     ) -> str:  # sourcery skip: merge-else-if-into-elif, remove-redundant-if
         chat_stream = self.chat_stream
         chat_id = chat_stream.stream_id
@@ -972,14 +984,14 @@ class PrivateReplyer:
         )
 
     async def _build_single_sending_message(
-        self,
-        message_id: str,
-        message_segment: Seg,
-        reply_to: bool,
-        is_emoji: bool,
-        thinking_start_time: float,
-        display_message: str,
-        anchor_message: Optional[MessageRecv] = None,
+            self,
+            message_id: str,
+            message_segment: Seg,
+            reply_to: bool,
+            is_emoji: bool,
+            thinking_start_time: float,
+            display_message: str,
+            anchor_message: Optional[MessageRecv] = None,
     ) -> MessageSending:
         """构建单个发送消息"""
 
@@ -1005,7 +1017,7 @@ class PrivateReplyer:
             display_message=display_message,
         )
 
-    async def llm_generate_content(self, prompt: str):
+    async def llm_generate_content(self, prompt: str | Tuple[str, str]):
         with Timer("LLM生成", {}):  # 内部计时器，可选保留
             # 直接使用已初始化的模型实例
             logger.info(f"\n{prompt}\n")

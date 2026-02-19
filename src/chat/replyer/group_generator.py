@@ -118,7 +118,8 @@ class DefaultReplyer:
                     unknown_words=unknown_words,
                 )
             prompt_duration_ms = (time.perf_counter() - prompt_start) * 1000
-            llm_response.prompt = f"System Prompt:\n{prompt[0]}\n\nUser Prompt:\n{prompt[1]}"
+            prompt_text = f"System Prompt:\n{prompt[0]}\n\nUser Prompt:\n{prompt[1]}"
+            llm_response.prompt = prompt_text
             llm_response.selected_expressions = selected_expressions
             llm_response.timing = {
                 "prompt_ms": round(prompt_duration_ms or 0.0, 2),
@@ -153,13 +154,14 @@ class DefaultReplyer:
 
             if not from_plugin:
                 continue_flag, modified_message = await events_manager.handle_mai_events(
-                    EventType.POST_LLM, None, prompt, None, stream_id=stream_id
+                    EventType.POST_LLM, None, prompt[1], None, stream_id=stream_id
                 )
                 if not continue_flag:
                     raise UserWarning("插件于请求前中断了内容生成")
                 if modified_message and modified_message._modify_flags.modify_llm_prompt:
-                    llm_response.prompt = modified_message.llm_prompt
-                    prompt = str(modified_message.llm_prompt)
+                    prompt[1] = modified_message.llm_prompt
+                    prompt_text = f"System Prompt:\n{prompt[0]}\n\nUser Prompt:\n{prompt[1]}"
+                    llm_response.prompt = prompt_text
 
             # 4. 调用 LLM 生成回复
             content = None
@@ -179,9 +181,9 @@ class DefaultReplyer:
                     logger.info(timing_log_str)
                     # 2. 输出Prompt日志
                     if global_config.debug.show_replyer_prompt:
-                        logger.info(f"\n{prompt}\n")
+                        logger.info(f"\n{prompt_text}\n")
                     else:
-                        logger.debug(f"\nreplyer_Prompt:{prompt}\n")
+                        logger.debug(f"\nreplyer_Prompt:{prompt_text}\n")
                     # 3. 输出模型生成内容和推理日志
                     logger.info(f"模型: [{model_name}][思考等级:{think_level}]生成内容: {content}")
                     if global_config.debug.show_replyer_reasoning and reasoning_content:
@@ -202,7 +204,7 @@ class DefaultReplyer:
                     if log_reply:
                         PlanReplyLogger.log_reply(
                             chat_id=self.chat_stream.stream_id,
-                            prompt=prompt,
+                            prompt=prompt_text,
                             output=content,
                             processed_output=None,
                             model=model_name,
@@ -238,9 +240,9 @@ class DefaultReplyer:
                     logger.info(timing_log_str)
                     # 2. 输出Prompt日志
                     if global_config.debug.show_replyer_prompt:
-                        logger.info(f"\n{prompt}\n")
+                        logger.info(f"\n{prompt_text}\n")
                     else:
-                        logger.debug(f"\nreplyer_Prompt:{prompt}\n")
+                        logger.debug(f"\nreplyer_Prompt:{prompt_text}\n")
                     # 3. 输出模型生成失败信息
                     logger.info("模型生成失败，无法输出生成内容和推理")
                 except Exception as log_e:
@@ -255,7 +257,7 @@ class DefaultReplyer:
                     try:
                         PlanReplyLogger.log_reply(
                             chat_id=self.chat_stream.stream_id,
-                            prompt=prompt or "",
+                            prompt=prompt_text or "",
                             output=None,
                             processed_output=None,
                             model=model_name,
