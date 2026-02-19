@@ -99,7 +99,7 @@ class PrivateReplyer:
             available_actions = {}
         try:
             # 3. 构建 Prompt
-            prompt: Tuple[str, str]
+            prompt: List[str]
             with Timer("构建Prompt", {}):  # 内部计时器，可选保留
                 prompt, selected_expressions = await self.build_prompt_reply_context(
                     extra_info=extra_info,
@@ -614,7 +614,7 @@ class PrivateReplyer:
             chosen_actions: Optional[List[ActionPlannerInfo]] = None,
             enable_tool: bool = True,
             unknown_words: Optional[List[str]] = None,
-    ) -> Tuple[Tuple[str, str], List[int]]:
+    ) -> Tuple[List[str], List[int]]:
         """
         构建回复器上下文
 
@@ -825,7 +825,7 @@ class PrivateReplyer:
 
         # 使用统一的 is_bot_self 函数判断是否是机器人自己（支持多平台，包括 WebUI）
         if is_bot_self(platform, user_id):
-            return (
+            return [
                 await global_prompt_manager.format_prompt(
                     "private_replyer_prompt_system",
                     identity=personality_prompt,
@@ -850,9 +850,9 @@ class PrivateReplyer:
                     memory_retrieval=memory_retrieval,
                     chat_prompt=chat_prompt_block,
                 )
-            ), selected_expressions
+            ], selected_expressions
         else:
-            return (
+            return [
                 await global_prompt_manager.format_prompt(
                     "private_replyer_prompt_system",
                     identity=personality_prompt,
@@ -877,7 +877,7 @@ class PrivateReplyer:
                     chat_prompt=chat_prompt_block,
                     planner_reasoning=planner_reasoning,
                 )
-            ), selected_expressions
+            ], selected_expressions
 
     async def build_prompt_rewrite_context(
             self,
@@ -1017,7 +1017,7 @@ class PrivateReplyer:
             display_message=display_message,
         )
 
-    async def llm_generate_content(self, prompt: str | Tuple[str, str]):
+    async def llm_generate_content(self, prompt: str | List[str] | Tuple[str, str]):
         with Timer("LLM生成", {}):  # 内部计时器，可选保留
             # 直接使用已初始化的模型实例
             logger.info(f"\n{prompt}\n")

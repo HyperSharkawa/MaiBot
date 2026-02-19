@@ -132,7 +132,7 @@ class LLMRequest:
 
     async def generate_response_async(
             self,
-            prompt: str | Tuple[str, str],
+            prompt: str | List[str] | Tuple[str, str],
             temperature: Optional[float] = None,
             max_tokens: Optional[int] = None,
             tools: Optional[List[Dict[str, Any]]] = None,
@@ -152,11 +152,11 @@ class LLMRequest:
         start_time = time.time()
 
         def message_factory(client: BaseClient) -> List[Message]:
-            if isinstance(prompt,str):
+            if isinstance(prompt, str):
                 message_builder = MessageBuilder()
                 message_builder.add_text_content(prompt)
                 return [message_builder.build()]
-            elif isinstance(prompt, tuple) and len(prompt) == 2:
+            elif (isinstance(prompt, tuple) or isinstance(prompt, list)) and len(prompt) == 2:
                 system_message = MessageBuilder().set_role(RoleType.System).add_text_content(prompt[0]).build()
                 user_message = MessageBuilder().set_role(RoleType.User).add_text_content(prompt[1]).build()
                 return [system_message, user_message]

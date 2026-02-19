@@ -104,7 +104,7 @@ class DefaultReplyer:
             timing_logs = []
             almost_zero_str = ""
             prompt_start = time.perf_counter()
-            prompt: Tuple[str, str]
+            prompt: List[str]
             with Timer("构建Prompt", {}):  # 内部计时器，可选保留
                 prompt, selected_expressions, timing_logs, almost_zero_str = await self.build_prompt_reply_context(
                     extra_info=extra_info,
@@ -758,7 +758,7 @@ class DefaultReplyer:
             reply_time_point: Optional[float] = time.time(),
             think_level: int = 1,
             unknown_words: Optional[List[str]] = None,
-    ) -> Tuple[Tuple[str, str], List[int], List[str], str]:
+    ) -> Tuple[List[str], List[int], List[str], str]:
         """
         构建回复器上下文
 
@@ -980,7 +980,7 @@ class DefaultReplyer:
                 # 兜底：即使 multiple_reply_style 配置异常也不影响正常回复
                 reply_style = global_config.personality.reply_style
 
-        return (
+        return [
             await global_prompt_manager.format_prompt(
                 "replyer_prompt_system",
                 identity=personality_prompt,
@@ -1006,7 +1006,7 @@ class DefaultReplyer:
                 chat_prompt=chat_prompt_block,
                 planner_reasoning=planner_reasoning,
             )
-        ), selected_expressions, timing_logs, almost_zero_str
+        ], selected_expressions, timing_logs, almost_zero_str
 
     async def build_prompt_rewrite_context(
             self,
@@ -1142,7 +1142,7 @@ class DefaultReplyer:
             display_message=display_message,
         )
 
-    async def llm_generate_content(self, prompt: str | Tuple[str, str]):
+    async def llm_generate_content(self, prompt: str | List[str] | Tuple[str, str]):
         with Timer("LLM生成", {}):  # 内部计时器，可选保留
             # 直接使用已初始化的模型实例
             # logger.info(f"\n{prompt}\n")
