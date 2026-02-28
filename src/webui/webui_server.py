@@ -257,6 +257,8 @@ class WebUIServer:
         try:
             with socket.socket(family, socket.SOCK_STREAM) as s:
                 s.settimeout(1)
+                # 允许地址快速复用，避免程序快速重启时因 TIME_WAIT 导致端口检测误判
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 # 尝试绑定端口
                 s.bind((test_host, self.port))
                 return True
