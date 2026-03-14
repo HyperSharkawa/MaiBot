@@ -132,7 +132,7 @@ class ExpressionLearner:
         # logger.info(f"学习{type_str}的prompt: {prompt}")
 
         try:
-            response, _ = await self.express_learn_model.generate_response_async(prompt, temperature=0.3)
+            response, _ = await self.express_learn_model.generate_response_async(prompt)
         except Exception as e:
             logger.error(f"学习表达方式失败,模型生成出错: {e}")
             return None
@@ -429,7 +429,7 @@ class ExpressionLearner:
         )
 
         try:
-            summary, _ = await self.summary_model.generate_response_async(prompt, temperature=0.2)
+            summary, _ = await self.summary_model.generate_response_async(prompt)
             summary = summary.strip()
             if summary:
                 return summary

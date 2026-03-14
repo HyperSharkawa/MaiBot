@@ -93,7 +93,6 @@ async def single_expression_check(situation: str, style: str) -> tuple[bool, str
         
         response, (reasoning, model_name, _) = await judge_llm.generate_response_async(
             prompt=prompt,
-            temperature=0.6,
             max_tokens=1024
         )
         

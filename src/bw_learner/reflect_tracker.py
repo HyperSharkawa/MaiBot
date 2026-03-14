@@ -112,7 +112,7 @@ class ReflectTracker:
 
             logger.info(f"ReflectTracker LLM Prompt: {prompt}")
 
-            response, _ = await self.judge_model.generate_response_async(prompt, temperature=0.1)
+            response, _ = await self.judge_model.generate_response_async(prompt)
 
             logger.info(f"ReflectTracker LLM Response: {response}")
 

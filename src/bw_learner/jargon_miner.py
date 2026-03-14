@@ -299,7 +299,7 @@ class JargonMiner:
                 previous_meaning_instruction=previous_meaning_instruction,
             )
 
-            response1, _ = await self.llm_inference.generate_response_async(prompt1, temperature=0.3)
+            response1, _ = await self.llm_inference.generate_response_async(prompt1)
             if not response1:
                 logger.warning(f"jargon {content} 推断1失败：无响应")
                 return
@@ -336,7 +336,7 @@ class JargonMiner:
                 content=content,
             )
 
-            response2, _ = await self.llm_inference.generate_response_async(prompt2, temperature=0.3)
+            response2, _ = await self.llm_inference.generate_response_async(prompt2)
             if not response2:
                 logger.warning(f"jargon {content} 推断2失败：无响应")
                 return
@@ -383,7 +383,7 @@ class JargonMiner:
             if global_config.debug.show_jargon_prompt:
                 logger.info(f"jargon {content} 比较提示词: {prompt3}")
 
-            response3, _ = await self.llm_inference.generate_response_async(prompt3, temperature=0.3)
+            response3, _ = await self.llm_inference.generate_response_async(prompt3)
             if not response3:
                 logger.warning(f"jargon {content} 比较失败：无响应")
                 return

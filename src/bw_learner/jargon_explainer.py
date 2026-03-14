@@ -228,7 +228,7 @@ class JargonExplainer:
             jargon_explanations=explanations_text,
         )
 
-        summary, _ = await self.llm.generate_response_async(summarize_prompt, temperature=0.3)
+        summary, _ = await self.llm.generate_response_async(summarize_prompt)
         if not summary:
             # 如果LLM概括失败，直接返回原始解释
             return f"上下文中的黑话解释：\n{explanations_text}"
