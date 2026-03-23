@@ -3,13 +3,27 @@
 import asyncio
 import mimetypes
 from pathlib import Path
-from fastapi import FastAPI
+import socket
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from uvicorn import Config, Server as UvicornServer
 from src.common.logger import get_logger
 
 logger = get_logger("webui_server")
+
+
+def _resolve_safe_static_file_path(static_path: Path, full_path: str) -> Path | None:
+    static_root = static_path.resolve()
+
+    try:
+        candidate_path = (static_root / full_path).resolve()
+        candidate_path.relative_to(static_root)
+    except (OSError, RuntimeError, ValueError):
+        logger.warning(f"🚫 检测到疑似路径穿越请求: {full_path}")
+        return None
+
+    return candidate_path
 
 
 class WebUIServer:
@@ -108,8 +122,11 @@ class WebUIServer:
                 return response
 
             # 检查是否是静态文件
-            file_path = static_path / full_path
-            if file_path.is_file() and file_path.exists():
+            file_path = _resolve_safe_static_file_path(static_path, full_path)
+            if file_path is None:
+                raise HTTPException(status_code=404, detail="Not Found")
+
+            if file_path.exists() and file_path.is_file():
                 # 自动检测 MIME 类型
                 media_type = mimetypes.guess_type(str(file_path))[0]
                 response = FileResponse(file_path, media_type=media_type)
@@ -242,8 +259,6 @@ class WebUIServer:
 
     def _check_port_available(self) -> bool:
         """检查端口是否可用（支持 IPv4 和 IPv6）"""
-        import socket
-
         # 判断使用 IPv4 还是 IPv6
         if ':' in self.host:
             # IPv6 地址
@@ -257,7 +272,7 @@ class WebUIServer:
         try:
             with socket.socket(family, socket.SOCK_STREAM) as s:
                 s.settimeout(1)
-                # 允许地址快速复用，避免程序快速重启时因 TIME_WAIT 导致端口检测误判
+                # 与 Uvicorn 一致：允许在 TIME_WAIT 状态下绑定，减少误报
                 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 # 尝试绑定端口
                 s.bind((test_host, self.port))
