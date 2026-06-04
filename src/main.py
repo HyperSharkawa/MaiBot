@@ -86,7 +86,7 @@ class MainSystem:
         await async_task_manager.add_task(OnlineTimeRecordTask())
 
         # 添加统计信息输出任务
-        await async_task_manager.add_task(StatisticOutputTask())
+        # await async_task_manager.add_task(StatisticOutputTask())  # 已禁用：数据库表过大导致查询耗时过长，阻塞GIL
 
         # 添加遥测心跳任务
         await async_task_manager.add_task(TelemetryHeartBeatTask())
