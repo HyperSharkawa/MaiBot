@@ -1,6 +1,8 @@
 import re
 import time
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Tuple
+
+import ahocorasick
 
 from src.common.logger import get_logger
 from src.common.database.database_model import Jargon
@@ -16,6 +18,89 @@ from src.bw_learner.learner_utils import (
 )
 
 logger = get_logger("jargon")
+
+# 全局 Aho-Corasick 自动机缓存
+_jargon_automaton: Optional[ahocorasick.Automaton] = None
+_jargon_metadata: Dict[int, Dict[str, Any]] = {}  # {jargon_id: {content, is_global, chat_id, ...}}
+_cache_last_update: float = 0.0
+_CACHE_TTL = 300.0  # 缓存有效期 5 分钟
+
+
+def _build_jargon_automaton() -> Tuple[ahocorasick.Automaton, Dict[int, Dict[str, Any]]]:
+    """
+    构建黑话 Aho-Corasick 自动机及元数据缓存
+    
+    使用 Aho-Corasick 算法实现多模式匹配，一次扫描即可匹配所有黑话。
+    时间复杂度从 O(n×m) 降至 O(n+m+z)，其中 n=黑话数量，m=文本长度，z=匹配数量。
+    
+    Returns:
+        Tuple[Automaton, Dict]: (自动机对象, {jargon_id: 元数据字典})
+    """
+    logger.debug("正在构建黑话 Aho-Corasick 自动机...")
+    start_time = time.time()
+    
+    automaton = ahocorasick.Automaton()
+    metadata: Dict[int, Dict[str, Any]] = {}
+    
+    # 查询所有有 meaning 的黑话
+    query = Jargon.select().where((Jargon.meaning.is_null(False)) & (Jargon.meaning != ""))
+    
+    added_count = 0
+    for jargon in query:
+        content = jargon.content or ""
+        if not content or not content.strip():
+            continue
+        
+        # 添加到自动机（小写匹配，大小写不敏感）
+        try:
+            automaton.add_word(content.lower(), jargon.id)
+            added_count += 1
+            
+            # 保存元数据供后续过滤使用
+            metadata[jargon.id] = {
+                'content': content,
+                'is_global': jargon.is_global,
+                'chat_id': jargon.chat_id,
+            }
+        except Exception as e:
+            logger.warning(f"添加黑话到自动机失败: {content}, 错误: {e}")
+            continue
+    
+    # 构建自动机（必须调用才能使用）
+    automaton.make_automaton()
+    
+    build_time = time.time() - start_time
+    logger.debug(f"黑话自动机构建完成: {added_count} 条, 耗时 {build_time:.3f}s")
+    
+    return automaton, metadata
+
+
+def _get_jargon_automaton() -> Tuple[ahocorasick.Automaton, Dict[int, Dict[str, Any]]]:
+    """
+    获取黑话 Aho-Corasick 自动机（带缓存）
+    
+    缓存每 5 分钟刷新一次，以反映数据库更新。
+    
+    Returns:
+        Tuple[Automaton, Dict]: (自动机对象, {jargon_id: 元数据字典})
+    """
+    global _jargon_automaton, _jargon_metadata, _cache_last_update
+    
+    current_time = time.time()
+    
+    # 检查缓存是否有效
+    if (
+        current_time - _cache_last_update < _CACHE_TTL
+        and _jargon_automaton is not None
+        and _jargon_metadata
+    ):
+        return _jargon_automaton, _jargon_metadata
+    
+    # 重建缓存
+    _jargon_automaton, _jargon_metadata = _build_jargon_automaton()
+    _cache_last_update = current_time
+    
+    return _jargon_automaton, _jargon_metadata
 
 
 def _init_explainer_prompts() -> None:
@@ -82,61 +167,58 @@ class JargonExplainer:
 
         # 合并所有消息文本
         combined_text = " ".join(message_texts)
+        combined_text_lower = combined_text.lower()  # 小写化用于匹配
 
-        # 查询所有有meaning的jargon记录
-        query = Jargon.select().where((Jargon.meaning.is_null(False)) & (Jargon.meaning != ""))
+        # 获取 Aho-Corasick 自动机和元数据
+        automaton, metadata = _get_jargon_automaton()
 
-        # 根据all_global配置决定查询逻辑
-        if global_config.expression.all_global_jargon:
-            # 开启all_global：只查询is_global=True的记录
-            query = query.where(Jargon.is_global)
-        else:
-            # 关闭all_global：查询is_global=True或chat_id列表包含当前chat_id的记录
-            # 这里先查询所有，然后在Python层面过滤
-            pass
-
-        # 按count降序排序，优先匹配出现频率高的
-        query = query.order_by(Jargon.count.desc())
-
-        # 执行查询并匹配
+        # 使用 Aho-Corasick 一次扫描匹配所有黑话
         matched_jargon: Dict[str, Dict[str, str]] = {}
         query_time = time.time()
 
-        for jargon in query:
-            content = jargon.content or ""
-            if not content or not content.strip():
+        for end_index, jargon_id in automaton.iter(combined_text_lower):
+            # 从元数据中获取黑话信息
+            meta = metadata.get(jargon_id)
+            if not meta:
                 continue
-
+            
+            content = meta['content']
+            
             # 跳过包含机器人昵称的词条
             if contains_bot_self_name(content):
                 continue
-
-            # 检查chat_id（如果all_global=False）
+            
+            # 检查 chat_id（如果 all_global=False）
             if not global_config.expression.all_global_jargon:
-                if jargon.is_global:
+                if meta['is_global']:
                     # 全局黑话，包含
                     pass
                 else:
-                    # 检查chat_id列表是否包含当前chat_id
-                    chat_id_list = parse_chat_id_list(jargon.chat_id)
+                    # 检查 chat_id 列表是否包含当前 chat_id
+                    chat_id_list = parse_chat_id_list(meta['chat_id'])
                     if not chat_id_list_contains(chat_id_list, self.chat_id):
                         continue
-
-            # 在文本中查找匹配（大小写不敏感）
-            pattern = re.escape(content)
-            # 使用单词边界或中文字符边界来匹配，避免部分匹配
-            # 对于中文，使用Unicode字符类；对于英文，使用单词边界
-            if re.search(r"[\u4e00-\u9fff]", content):
-                # 包含中文，使用更宽松的匹配
-                search_pattern = pattern
-            else:
-                # 纯英文/数字，使用单词边界
-                search_pattern = r"\b" + pattern + r"\b"
-
-            if re.search(search_pattern, combined_text, re.IGNORECASE):
-                # 找到匹配，记录（去重）
-                if content not in matched_jargon:
-                    matched_jargon[content] = {"content": content}
+            
+            # 对纯英文黑话进行单词边界检查（避免部分匹配）
+            if not re.search(r"[\u4e00-\u9fff]", content):  # 纯英文/数字
+                # 检查匹配位置的前后字符是否为单词边界
+                start_index = end_index - len(content) + 1
+                
+                # 检查前边界
+                if start_index > 0:
+                    prev_char = combined_text[start_index - 1]
+                    if prev_char.isalnum() or prev_char == '_':
+                        continue  # 前面是字母数字或下划线，不是单词边界
+                
+                # 检查后边界
+                if end_index + 1 < len(combined_text):
+                    next_char = combined_text[end_index + 1]
+                    if next_char.isalnum() or next_char == '_':
+                        continue  # 后面是字母数字或下划线，不是单词边界
+            
+            # 匹配成功，记录（去重）
+            if content not in matched_jargon:
+                matched_jargon[content] = {"content": content}
 
         match_time = time.time()
         total_time = match_time - start_time
