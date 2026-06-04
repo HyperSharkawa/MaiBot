@@ -3,7 +3,7 @@
 import logging
 import json
 import threading
-import time
+import asyncio
 import structlog
 import tomlkit
 
@@ -23,6 +23,7 @@ _ws_handler = None
 # 全局标志，防止重复初始化
 _logging_initialized = False
 _cleanup_task_started = False
+_cleanup_task_handle: Optional[asyncio.Task] = None
 
 
 def get_file_handler():
@@ -894,8 +895,8 @@ def initialize_logging(verbose: bool = True):
     configure_third_party_loggers()
     reconfigure_existing_loggers()
 
-    # 启动日志清理任务
-    start_log_cleanup_task(verbose=verbose)
+    # 注意：日志清理任务需要在 asyncio 事件循环中启动
+    # 调用方需要在事件循环启动后调用 start_log_cleanup_task(loop)
 
     # 只在 verbose=True 时输出详细的初始化信息
     if verbose:
@@ -939,31 +940,56 @@ def cleanup_old_logs():
         logger.error(f"清理旧日志文件时出错: {e}")
 
 
-def start_log_cleanup_task(verbose: bool = True):
+async def _cleanup_task_loop():
+    """异步日志清理循环任务"""
+    while True:
+        try:
+            cleanup_old_logs()
+        except Exception as e:
+            logger = get_logger("logger")
+            logger.error(f"日志清理任务执行失败: {e}")
+        
+        # 每24小时执行一次
+        await asyncio.sleep(24 * 60 * 60)
+
+
+def start_log_cleanup_task(loop: Optional[asyncio.AbstractEventLoop] = None, verbose: bool = True):
     """启动日志清理任务
     
     Args:
+        loop: asyncio 事件循环。如果为 None，尝试获取当前运行的事件循环。
         verbose: 是否输出启动信息。默认为 True。
+    
+    Returns:
+        asyncio.Task: 清理任务的 Task 对象，如果启动失败则返回 None。
     """
-    global _cleanup_task_started
+    global _cleanup_task_started, _cleanup_task_handle
     
     # 防止重复启动清理任务
     if _cleanup_task_started:
-        return
+        return _cleanup_task_handle
     
     _cleanup_task_started = True
-
-    def cleanup_task():
-        while True:
-            cleanup_old_logs()
-            time.sleep(24 * 60 * 60)  # 每24小时执行一次
-
-    cleanup_thread = threading.Thread(target=cleanup_task, daemon=True)
-    cleanup_thread.start()
-
+    
+    # 获取事件循环
+    if loop is None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # 如果没有运行中的事件循环，延迟启动
+            if verbose:
+                logger = get_logger("logger")
+                logger.warning("日志清理任务将在事件循环启动后自动创建")
+            return None
+    
+    # 创建异步任务
+    _cleanup_task_handle = loop.create_task(_cleanup_task_loop())
+    
     if verbose:
         logger = get_logger("logger")
-        logger.info("已启动日志清理任务，将自动清理30天前的日志文件（轮转份数限制: 30个文件）")
+        logger.info("已启动日志清理任务（asyncio），将自动清理30天前的日志文件（轮转份数限制: 30个文件）")
+    
+    return _cleanup_task_handle
 
 
 def shutdown_logging():

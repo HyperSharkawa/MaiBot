@@ -367,9 +367,12 @@ if __name__ == "__main__":
         asyncio.set_event_loop(loop)
 
         # 初始化 WebSocket 日志推送
-        from src.common.logger import initialize_ws_handler
+        from src.common.logger import initialize_ws_handler, start_log_cleanup_task
 
         initialize_ws_handler(loop)
+        
+        # 启动日志清理任务（asyncio 版本）
+        start_log_cleanup_task(loop, verbose=True)
 
         # 在 Linux 上添加终止信号处理器
         if sys.platform == "linux":
