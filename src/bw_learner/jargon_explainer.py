@@ -172,6 +172,10 @@ class JargonExplainer:
         # 获取 Aho-Corasick 自动机和元数据
         automaton, metadata = _get_jargon_automaton()
 
+        # 黑话库没有可用词条时，pyahocorasick 的空自动机不能调用 iter；此时结果必然为空。
+        if not metadata:
+            return []
+
         # 使用 Aho-Corasick 一次扫描匹配所有黑话
         matched_jargon: Dict[str, Dict[str, str]] = {}
         query_time = time.time()
