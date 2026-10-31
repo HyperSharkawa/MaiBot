@@ -8,6 +8,9 @@ import time
 import traceback
 from pathlib import Path
 
+if sys.version_info[:2] != (3, 15):
+    raise SystemExit("MaiBot 需要 Python 3.15，请使用 uv 管理的 Python 3.15.2 环境启动。")
+
 from dotenv import load_dotenv
 from rich.traceback import install
 

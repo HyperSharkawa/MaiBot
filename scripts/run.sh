@@ -7,6 +7,8 @@
 INSTALLER_VERSION="0.0.5-refactor"
 LANG=C.UTF-8
 
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/python_runtime.sh"
+
 # 如无法访问GitHub请修改此处镜像地址
 GITHUB_REPO="https://ghfast.top/https://github.com"
 
@@ -18,11 +20,11 @@ RESET="\e[0m"
 # 需要的基本软件包
 
 declare -A REQUIRED_PACKAGES=(
-    ["common"]="git sudo python3 curl gnupg"
-    ["debian"]="python3-venv python3-pip build-essential"
-    ["ubuntu"]="python3-venv python3-pip build-essential"
-    ["centos"]="epel-release python3-pip python3-devel gcc gcc-c++ make"
-    ["arch"]="python-virtualenv python-pip base-devel"
+    ["common"]="git sudo curl gnupg"
+    ["debian"]="build-essential"
+    ["ubuntu"]="build-essential"
+    ["centos"]="epel-release gcc gcc-c++ make"
+    ["arch"]="base-devel"
 )
 
 # 默认项目目录
@@ -110,6 +112,7 @@ show_menu() {
 
 # 更新依赖
 update_dependencies() {
+    require_uv && validate_maibot_python "${INSTALL_DIR}/venv/bin/python" || return 1
     whiptail --title "⚠" --msgbox "更新后请阅读教程" 10 60
     systemctl stop ${SERVICE_NAME}
     cd "${INSTALL_DIR}/MaiBot" || {
@@ -120,18 +123,16 @@ update_dependencies() {
         whiptail --msgbox "🚫 代码更新失败！" 10 60
         return 1
     fi
-    source "${INSTALL_DIR}/venv/bin/activate"
-    if ! pip install -r requirements.txt; then
+    if ! install_maibot_dependencies "${INSTALL_DIR}/MaiBot" "${INSTALL_DIR}/venv/bin/python"; then
         whiptail --msgbox "🚫 依赖安装失败！" 10 60
-        deactivate
         return 1
     fi
-    deactivate
     whiptail --msgbox "✅ 已停止服务并拉取最新仓库提交" 10 60
 }
 
 # 切换分支
 switch_branch() {
+    require_uv && validate_maibot_python "${INSTALL_DIR}/venv/bin/python" || return 1
     new_branch=$(whiptail --inputbox "请输入要切换的分支名称：" 10 60 "${BRANCH}" 3>&1 1>&2 2>&3)
     [[ -z "$new_branch" ]] && {
         whiptail --msgbox "🚫 分支名称不能为空！" 10 60
@@ -158,9 +159,7 @@ switch_branch() {
         return 1
     fi
     systemctl stop ${SERVICE_NAME}
-    source "${INSTALL_DIR}/venv/bin/activate"
-    pip install -r requirements.txt
-    deactivate
+    install_maibot_dependencies "${INSTALL_DIR}/MaiBot" "${INSTALL_DIR}/venv/bin/python" || return 1
 
     sed -i "s/^BRANCH=.*/BRANCH=${new_branch}/" /etc/maicore_install.conf
     BRANCH="${new_branch}"
@@ -330,19 +329,8 @@ run_installation() {
     # 仅在非Arch系统上安装NapCat
     [[ "$ID" != "arch" ]] && install_napcat
 
-    # Python版本检查
-    check_python() {
-        PYTHON_VERSION=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-        if ! python3 -c "import sys; exit(0) if sys.version_info >= (3,10) else exit(1)"; then
-            whiptail --title "⚠️ [4/6] Python 版本过低" --msgbox "检测到 Python 版本为 $PYTHON_VERSION，需要 3.10 或以上！\n请升级 Python 后重新运行本脚本。" 10 60
-            exit 1
-        fi
-    }
-
-    # 如果没安装python则不检查python版本
-    if command -v python3 &>/dev/null; then
-        check_python
-    fi
+    # Python 由 uv 管理，不检查或安装宿主系统的 Python。
+    require_uv || return 1
     
 
     # 选择分支
@@ -425,8 +413,7 @@ run_installation() {
     cd "$INSTALL_DIR" || exit 1
 
     echo -e "${GREEN}设置Python虚拟环境...${RESET}"
-    python3 -m venv venv
-    source venv/bin/activate
+    prepare_maibot_environment "$INSTALL_DIR/venv" || return 1
 
     echo -e "${GREEN}克隆MaiCore仓库...${RESET}"
     git clone -b "$BRANCH" "$GITHUB_REPO/MaiM-with-u/MaiBot" MaiBot || {
@@ -448,20 +435,18 @@ run_installation() {
 
 
     echo -e "${GREEN}安装Python依赖...${RESET}"
-    pip install -r MaiBot/requirements.txt
     cd MaiBot
-    pip install uv
-    uv pip install -i https://mirrors.aliyun.com/pypi/simple -r requirements.txt   
+    install_maibot_dependencies "$INSTALL_DIR/MaiBot" "$INSTALL_DIR/venv/bin/python" || return 1
     cd ..
 
     echo -e "${GREEN}安装maim_message依赖...${RESET}"
     cd maim_message
-    uv pip install -i https://mirrors.aliyun.com/pypi/simple -e .
+    install_maibot_dependencies "$INSTALL_DIR/MaiBot" "$INSTALL_DIR/venv/bin/python" -i https://mirrors.aliyun.com/pypi/simple -e . || return 1
     cd ..
 
     echo -e "${GREEN}部署MaiBot Napcat Adapter...${RESET}"
     cd MaiBot-Napcat-Adapter
-    uv pip install -i https://mirrors.aliyun.com/pypi/simple -r requirements.txt
+    install_maibot_dependencies "$INSTALL_DIR/MaiBot" "$INSTALL_DIR/venv/bin/python" -i https://mirrors.aliyun.com/pypi/simple -r requirements.txt || return 1
     cd ..
 
     echo -e "${GREEN}同意协议...${RESET}"

@@ -2,7 +2,7 @@
 name = "MaiBot"
 version = "0.11.6"
 description = "MaiCore 是一个基于大语言模型的可交互智能体"
-requires-python = ">=3.10"
+requires-python = ">=3.15,<3.16"
 dependencies = [
     "aiohttp>=3.12.14",
     "aiohttp-cors>=0.8.1",
@@ -48,6 +48,7 @@ default = true
 
 
 [tool.ruff]
+target-version = "py315"
 
 include = ["*.py"]
 

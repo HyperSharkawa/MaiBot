@@ -1,5 +1,6 @@
 from peewee import Model, DoubleField, IntegerField, BooleanField, TextField, FloatField, DateTimeField
 from .database import db
+from .performance_indexes import ensure_performance_indexes
 import datetime
 from src.common.logger import get_logger
 
@@ -497,6 +498,10 @@ def initialize_database(sync_constraints=False):
             logger.debug("开始同步数据库字段约束...")
             sync_field_constraints()
             logger.debug("数据库字段约束同步完成")
+
+        # 约束同步可能重建表，必须在最终表结构上补齐性能索引。
+        with db.connection_context():
+            ensure_performance_indexes(db, logger)
 
     except Exception as e:
         logger.exception(f"检查表或字段是否存在时出错: {e}")

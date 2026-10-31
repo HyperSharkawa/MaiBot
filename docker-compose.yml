@@ -40,7 +40,7 @@ services:
       - ./data/MaiMBot:/MaiMBot/data # 共享目录
       - ./data/MaiMBot/plugins:/MaiMBot/plugins # 插件目录
       - ./data/MaiMBot/logs:/MaiMBot/logs # 日志目录
-      # - site-packages:/usr/local/lib/python3.13/site-packages # 持久化Python包，需要时启用
+      # - site-packages:/usr/local/lib/python3.15/site-packages # 持久化Python包，需要时启用
     restart: always
     networks:
       - maim_bot

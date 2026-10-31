@@ -1,5 +1,5 @@
 # 编译 LPMM
-FROM python:3.13-slim AS lpmm-builder
+FROM python:3.15.2-slim AS lpmm-builder
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 WORKDIR /MaiMBot-LPMM
@@ -9,34 +9,40 @@ COPY MaiMBot-LPMM /MaiMBot-LPMM
 
 # 安装编译器和编译依赖
 RUN apt-get update && apt-get install -y build-essential
-RUN uv pip install --system --upgrade pip
-RUN cd /MaiMBot-LPMM && uv pip install --system -r requirements.txt
+# 此阶段只构建 quick-algo；应用运行依赖由下一阶段的项目锁统一安装。
+RUN uv pip install --system build "Cython>=3" "setuptools>=68" wheel
 
 # 编译 LPMM
-RUN cd /MaiMBot-LPMM/lib/quick_algo && python build_lib.py --cleanup --cythonize --install
+RUN cd /MaiMBot-LPMM/lib/quick_algo && python build_lib.py --cleanup --cythonize --build_wheel
 
 # 运行环境
-FROM python:3.13-slim
+FROM python:3.15.2-slim
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 # 工作目录
 WORKDIR /MaiMBot
 
 # 复制依赖列表
-COPY requirements.txt .
+COPY pyproject.toml uv.lock ./
 
-RUN apt-get update && apt-get install -y git
+# 从同一 Python 版本的编译阶段取得扩展，避免复制其他 ABI 的 site-packages。
+COPY --from=lpmm-builder /MaiMBot-LPMM/lib/quick_algo/dist/*.whl /tmp/lpmm-wheels/
 
-# 从编译阶段复制 LPMM 编译结果
-COPY --from=lpmm-builder /usr/local/lib/python3.13/site-packages/ /usr/local/lib/python3.13/site-packages/
-
-# 安装运行时依赖
-RUN uv pip install --system --upgrade pip
-RUN uv pip install --system -r requirements.txt
+# pyahocorasick 等依赖需要源码构建；完成后移除运行时不需要的编译器。
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git build-essential libgomp1 libstdc++6 \
+    && uv export --locked --no-dev --no-emit-project --no-hashes --output-file /tmp/runtime-requirements.txt \
+    && uv pip install --system -r /tmp/runtime-requirements.txt \
+    && uv pip install --system --no-deps --reinstall-package quick-algo /tmp/lpmm-wheels/*.whl \
+    && uv pip check --system \
+    && apt-get purge -y --auto-remove build-essential \
+    && rm -rf /var/lib/apt/lists/* /tmp/lpmm-wheels /tmp/runtime-requirements.txt
 
 # 复制项目代码
 COPY . .
 
 EXPOSE 8000
+
+ENV PYTHON_LAZY_IMPORTS=normal
 
 ENTRYPOINT [ "python","bot.py" ]

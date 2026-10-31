@@ -8,6 +8,8 @@
 SCRIPTS_DIR="scripts"
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 PROJECT_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
+source "$SCRIPT_DIR/python_runtime.sh"
+require_uv || exit 1
 
 # Step 2: Verify scripts directory exists
 if [ ! -d "$PROJECT_ROOT/$SCRIPTS_DIR" ]; then
@@ -37,7 +39,7 @@ echo "============================"
 run_python_script() {
     local script_name=$1
     echo "🔄 Running $script_name"
-    if ! python3 "$SCRIPTS_DIR/$script_name"; then
+    if ! uv run --locked --no-dev --python 3.15.2 python "$SCRIPTS_DIR/$script_name"; then
         echo "❌ $script_name failed" >&2
         exit 1
     fi

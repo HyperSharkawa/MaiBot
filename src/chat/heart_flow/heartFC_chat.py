@@ -1,6 +1,6 @@
 import asyncio
 import time
-import traceback
+lazy import traceback
 import random
 from typing import List, Optional, Dict, Any, Tuple, TYPE_CHECKING
 from rich.traceback import install
@@ -95,7 +95,6 @@ class HeartFChatting:
         self._loop_task: Optional[asyncio.Task] = None  # 主循环任务
 
         # 添加循环信息管理相关的属性
-        self.history_loop: List[CycleDetail] = []
         self._cycle_counter = 0
         self._current_cycle_detail: CycleDetail = None  # type: ignore
 
@@ -161,7 +160,6 @@ class HeartFChatting:
 
     def end_cycle(self, loop_info, cycle_timers):
         self._current_cycle_detail.set_loop_info(loop_info)
-        self.history_loop.append(self._current_cycle_detail)
         self._current_cycle_detail.timers = cycle_timers
         self._current_cycle_detail.end_time = time.time()
 

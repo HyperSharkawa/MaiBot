@@ -1,6 +1,6 @@
 import asyncio
 import time
-import traceback
+lazy import traceback
 import random
 from typing import List, Optional, Dict, Any, Tuple, TYPE_CHECKING
 from rich.traceback import install
@@ -90,7 +90,6 @@ class BrainChatting:
         self._new_message_event = asyncio.Event()  # 新消息事件，用于打断 wait
 
         # 添加循环信息管理相关的属性
-        self.history_loop: List[CycleDetail] = []
         self._cycle_counter = 0
         self._current_cycle_detail: CycleDetail = None  # type: ignore
 
@@ -144,7 +143,6 @@ class BrainChatting:
 
     def end_cycle(self, loop_info, cycle_timers):
         self._current_cycle_detail.set_loop_info(loop_info)
-        self.history_loop.append(self._current_cycle_detail)
         self._current_cycle_detail.timers = cycle_timers
         self._current_cycle_detail.end_time = time.time()
 
