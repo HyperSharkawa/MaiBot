@@ -55,9 +55,11 @@ class HeartFCMessageReceiver:
             message.is_at = is_at
             message.reply_probability_boost = reply_probability_boost
 
-            await self.storage.store_message(message, chat)
+            stored_id = await self.storage.store_message(message, chat)
+            if stored_id is None:
+                return
 
-            heartflow_instance = await heartflow.get_or_create_heartflow_chat(chat.stream_id)  # type: ignore
+            heartflow_instance = await heartflow.get_or_create_heartflow_chat(chat.stream_id, stored_id)  # type: ignore
             if isinstance(heartflow_instance, BrainChatting):
                 heartflow_instance._new_message_event.set()
                 logger.info(f"已通知 BrainChatting 处理新消息，chat_id={chat.stream_id}")

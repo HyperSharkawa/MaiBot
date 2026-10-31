@@ -2,9 +2,9 @@ import asyncio
 import random
 import re
 import time
-import traceback
+lazy import traceback
 from datetime import datetime
-from typing import List, Optional, Dict, Any, Tuple
+from typing import List, Optional, Dict, Any, Tuple, TYPE_CHECKING
 
 from src.bw_learner.expression_selector import expression_selector
 from src.bw_learner.jargon_explainer import explain_jargon_in_context
@@ -33,6 +33,9 @@ from src.person_info.person_info import Person, is_person_known
 from src.plugin_system.apis import llm_api
 from src.plugin_system.apis.message_api import translate_pid_to_description
 from src.plugin_system.base.component_types import ActionInfo, EventType
+
+if TYPE_CHECKING:
+    from src.chat.round_context import RoundContext
 
 # from src.memory_system.memory_activator import MemoryActivator
 
@@ -74,6 +77,7 @@ class PrivateReplyer:
             reply_time_point: Optional[float] = time.time(),
             unknown_words: Optional[List[str]] = None,
             log_reply: bool = True,
+            round_context: Optional["RoundContext"] = None,
     ) -> Tuple[bool, LLMGenerationDataModel]:
         # sourcery skip: merge-nested-ifs
         """
@@ -109,6 +113,7 @@ class PrivateReplyer:
                     reply_message=reply_message,
                     reply_reason=reply_reason,
                     unknown_words=unknown_words,
+                    round_context=round_context,
                 )
             prompt_text = f"System Prompt:\n{prompt[0]}\n\nUser Prompt:\n{prompt[1]}"
             llm_response.prompt = prompt_text
@@ -121,7 +126,8 @@ class PrivateReplyer:
 
             if not from_plugin:
                 continue_flag, modified_message = await events_manager.handle_mai_events(
-                    EventType.POST_LLM, None, prompt[1], None, stream_id=stream_id
+                    EventType.POST_LLM, round_context.event_message if round_context else None,
+                    prompt[1], None, stream_id=stream_id
                 )
                 if not continue_flag:
                     raise UserWarning("插件于请求前中断了内容生成")
@@ -143,7 +149,8 @@ class PrivateReplyer:
                 llm_response.model = model_name
                 llm_response.tool_calls = tool_call
                 continue_flag, modified_message = await events_manager.handle_mai_events(
-                    EventType.AFTER_LLM, None, prompt[1], llm_response, stream_id=stream_id
+                    EventType.AFTER_LLM, round_context.event_message if round_context else None,
+                    prompt[1], llm_response, stream_id=stream_id
                 )
                 if not from_plugin and not continue_flag:
                     raise UserWarning("插件于请求后取消了内容生成")
@@ -176,6 +183,7 @@ class PrivateReplyer:
             raw_reply: str = "",
             reason: str = "",
             reply_to: str = "",
+            round_context: Optional["RoundContext"] = None,
     ) -> Tuple[bool, LLMGenerationDataModel]:
         """
         表达器 (Expressor): 负责重写和优化回复文本。
@@ -196,6 +204,7 @@ class PrivateReplyer:
                     raw_reply=raw_reply,
                     reason=reason,
                     reply_to=reply_to,
+                    round_context=round_context,
                 )
             llm_response.prompt = prompt
 
@@ -614,6 +623,7 @@ class PrivateReplyer:
             chosen_actions: Optional[List[ActionPlannerInfo]] = None,
             enable_tool: bool = True,
             unknown_words: Optional[List[str]] = None,
+            round_context: Optional["RoundContext"] = None,
     ) -> Tuple[List[str], List[int]]:
         """
         构建回复器上下文
@@ -655,27 +665,30 @@ class PrivateReplyer:
         # 将[picid:xxx]替换为具体的图片描述
         target = self._replace_picids_with_descriptions(target)
 
-        message_list_before_now_long = get_raw_msg_before_timestamp_with_chat(
-            chat_id=chat_id,
-            timestamp=time.time(),
-            limit=global_config.chat.max_context_size,
-            filter_intercept_message_level=1,
-        )
-
-        dialogue_prompt = build_readable_messages(
+        if round_context is not None:
+            message_list_before_now_long = round_context.messages(global_config.chat.max_context_size)
+            message_list_before_short = round_context.messages(int(global_config.chat.max_context_size * 0.33))
+        else:
+            message_list_before_now_long = get_raw_msg_before_timestamp_with_chat(
+                chat_id=chat_id,
+                timestamp=time.time(),
+                limit=global_config.chat.max_context_size,
+                filter_intercept_message_level=1,
+            )
+            message_list_before_short = get_raw_msg_before_timestamp_with_chat(
+                chat_id=chat_id,
+                timestamp=time.time(),
+                limit=int(global_config.chat.max_context_size * 0.33),
+                filter_intercept_message_level=1,
+            )
+        format_messages = round_context.format_messages if round_context else build_readable_messages
+        dialogue_prompt = format_messages(
             message_list_before_now_long,
             replace_bot_name=True,
             timestamp_mode="relative",
             read_mark=0.0,
             show_actions=True,
             long_time_notice=True
-        )
-
-        message_list_before_short = get_raw_msg_before_timestamp_with_chat(
-            chat_id=chat_id,
-            timestamp=time.time(),
-            limit=int(global_config.chat.max_context_size * 0.33),
-            filter_intercept_message_level=1,
         )
 
         person_list_short: List[Person] = []
@@ -696,7 +709,7 @@ class PrivateReplyer:
         # for person in person_list_short:
         #     print(person.person_name)
 
-        chat_talking_prompt_short = build_readable_messages(
+        chat_talking_prompt_short = format_messages(
             message_list_before_short,
             replace_bot_name=True,
             timestamp_mode="relative",
@@ -884,6 +897,7 @@ class PrivateReplyer:
             raw_reply: str,
             reason: str,
             reply_to: str,
+            round_context: Optional["RoundContext"] = None,
     ) -> str:  # sourcery skip: merge-else-if-into-elif, remove-redundant-if
         chat_stream = self.chat_stream
         chat_id = chat_stream.stream_id
@@ -898,13 +912,14 @@ class PrivateReplyer:
         # 将[picid:xxx]替换为具体的图片描述
         target = self._replace_picids_with_descriptions(target)
 
-        message_list_before_now_half = get_raw_msg_before_timestamp_with_chat(
-            chat_id=chat_id,
-            timestamp=time.time(),
-            limit=min(int(global_config.chat.max_context_size * 0.33), 15),
-            filter_intercept_message_level=1,
+        limit = min(int(global_config.chat.max_context_size * 0.33), 15)
+        message_list_before_now_half = (
+            round_context.messages(limit) if round_context else get_raw_msg_before_timestamp_with_chat(
+                chat_id=chat_id, timestamp=time.time(), limit=limit, filter_intercept_message_level=1
+            )
         )
-        chat_talking_prompt_half = build_readable_messages(
+        format_messages = round_context.format_messages if round_context else build_readable_messages
+        chat_talking_prompt_half = format_messages(
             message_list_before_now_half,
             replace_bot_name=True,
             timestamp_mode="relative",

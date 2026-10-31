@@ -11,6 +11,7 @@ from src.plugin_system.base.component_types import ActionInfo, ActionActivationT
 from src.plugin_system.core.global_announcement_manager import global_announcement_manager
 
 if TYPE_CHECKING:
+    from src.chat.round_context import RoundContext
     from src.chat.message_receive.chat_stream import ChatStream
 
 logger = get_logger("action_manager")
@@ -35,6 +36,7 @@ class ActionModifier:
     async def modify_actions(
         self,
         message_content: str = "",
+        round_context: "RoundContext | None" = None,
     ):  # sourcery skip: use-named-expression
         """
         动作修改流程，整合传统观察处理和新的激活类型判定
@@ -54,12 +56,16 @@ class ActionModifier:
         self.action_manager.restore_actions()
         all_actions = self.action_manager.get_using_actions()
 
-        message_list_before_now_half = get_raw_msg_before_timestamp_with_chat(
-            chat_id=self.chat_stream.stream_id,
-            timestamp=time.time(),
-            limit=min(int(global_config.chat.max_context_size * 0.33), 10),
-            filter_intercept_message_level=1,
-        )
+        limit = max(1, min(int(global_config.chat.max_context_size * 0.33), 10))
+        if round_context is not None:
+            message_list_before_now_half = round_context.messages(limit)
+        else:
+            message_list_before_now_half = get_raw_msg_before_timestamp_with_chat(
+                chat_id=self.chat_stream.stream_id,
+                timestamp=time.time(),
+                limit=limit,
+                filter_intercept_message_level=1,
+            )
 
         chat_content = build_readable_messages(
             message_list_before_now_half,
@@ -67,6 +73,7 @@ class ActionModifier:
             timestamp_mode="relative",
             read_mark=0.0,
             show_actions=True,
+            action_records=round_context.stored.actions if round_context else None,
         )
 
         if message_content:
@@ -82,7 +89,11 @@ class ActionModifier:
                     logger.debug(f"{self.log_prefix}阶段一移除动作: {disabled_action_name}，原因: 用户自行禁用")
 
         # === 第二阶段：检查动作的关联类型 ===
-        chat_context = self.chat_stream.context
+        chat_context = (
+            ChatMessageContext(round_context.event_message)
+            if round_context and round_context.event_message
+            else self.chat_stream.context
+        )
         type_mismatched_actions = self._check_action_associated_types(all_actions, chat_context)
 
         if type_mismatched_actions:

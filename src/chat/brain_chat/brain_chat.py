@@ -21,11 +21,8 @@ from src.bw_learner.message_recorder import extract_and_distribute_messages
 from src.person_info.person_info import Person
 from src.plugin_system.base.component_types import EventType, ActionInfo
 from src.plugin_system.core import events_manager
-from src.plugin_system.apis import generator_api, send_api, message_api, database_api
-from src.chat.utils.chat_message_builder import (
-    build_readable_messages_with_id,
-    get_raw_msg_before_timestamp_with_chat,
-)
+from src.plugin_system.apis import generator_api, send_api, database_api
+from src.chat.round_context import ChatReadState, RoundContext
 
 if TYPE_CHECKING:
     from src.common.data_models.database_data_model import DatabaseMessages
@@ -62,7 +59,7 @@ class BrainChatting:
     用于在特定聊天流中生成回复。
     """
 
-    def __init__(self, chat_id: str):
+    def __init__(self, chat_id: str, first_message_id: int):
         """
         BrainChatting 初始化函数
 
@@ -94,6 +91,7 @@ class BrainChatting:
         self._current_cycle_detail: CycleDetail = None  # type: ignore
 
         self.last_read_time = time.time() - 2
+        self.read_state = ChatReadState(chat_id, first_message_id, self.chat_stream.platform)
 
         self.more_plan = False
 
@@ -160,26 +158,21 @@ class BrainChatting:
         )
 
     async def _loopbody(self):  # sourcery skip: hoist-if-from-if
-        # 获取最新消息（用于上下文，但不影响是否调用 observe）
-        recent_messages_list = message_api.get_messages_by_time_in_chat(
-            chat_id=self.stream_id,
-            start_time=self.last_read_time,
-            end_time=time.time(),
-            limit=20,
-            limit_mode="latest",
-            filter_mai=True,
-            filter_command=False,
-            filter_intercept_message_level=1,
+        """接纳本批输入，并保留没有新输入时继续完成当前思考的行为。"""
+        stream = get_chat_manager().get_stream(self.stream_id)
+        round_context = self.read_state.capture(
+            global_config.chat.max_context_size, stream.context.get_last_message()
         )
-
-        # 如果有新消息，更新 last_read_time 并触发事件以打断正在进行的 wait
-        if len(recent_messages_list) >= 1:
-            self.last_read_time = time.time()
-            self._new_message_event.set()  # 触发新消息事件，打断 wait
+        if not self.read_state.admit(round_context):
+            return True
+        recent_messages_list = list(round_context.stored.unread)
+        self.last_read_time = round_context.started_at
 
         # 总是执行一次思考迭代（不管有没有新消息）
         # wait 动作会在其内部等待，不需要在这里处理
-        should_continue = await self._observe(recent_messages_list=recent_messages_list)
+        should_continue = await self._observe(
+            recent_messages_list=recent_messages_list, round_context=round_context
+        )
 
         if not should_continue:
             # 选择了 complete_talk，返回 False 表示需要等待新消息
@@ -244,6 +237,8 @@ class BrainChatting:
     async def _observe(
         self,  # interest_value: float = 0.0,
         recent_messages_list: Optional[List["DatabaseMessages"]] = None,
+        *,
+        round_context: RoundContext,
     ) -> bool:  # sourcery skip: merge-else-if-into-elif, remove-redundant-if
         if recent_messages_list is None:
             recent_messages_list = []
@@ -271,7 +266,7 @@ class BrainChatting:
         reflector = expression_reflector_manager.get_or_create_reflector(self.stream_id)
         asyncio.create_task(reflector.check_and_ask())
 
-        async with global_prompt_manager.async_message_scope(self.chat_stream.context.get_template_name()):
+        async with global_prompt_manager.async_message_scope(round_context.template_name):
             # 通过 MessageRecorder 统一提取消息并分发给 expression_learner 和 jargon_miner
             # 在 replyer 执行时触发，统一管理时间窗口，避免重复获取消息
             asyncio.create_task(extract_and_distribute_messages(self.stream_id))
@@ -282,7 +277,7 @@ class BrainChatting:
             # 第一步：动作检查
             available_actions: Dict[str, ActionInfo] = {}
             try:
-                await self.action_modifier.modify_actions()
+                await self.action_modifier.modify_actions(round_context=round_context)
                 available_actions = self.action_manager.get_using_actions()
             except Exception as e:
                 logger.error(f"{self.log_prefix} 动作修改失败: {e}")
@@ -292,19 +287,7 @@ class BrainChatting:
 
             # 一次思考迭代：Think - Act - Observe
             # 获取聊天上下文
-            message_list_before_now = get_raw_msg_before_timestamp_with_chat(
-                chat_id=self.stream_id,
-                timestamp=time.time(),
-                limit=int(global_config.chat.max_context_size * 0.6),
-                filter_intercept_message_level=1,
-            )
-            chat_content_block, message_id_list = build_readable_messages_with_id(
-                messages=message_list_before_now,
-                timestamp_mode="normal_no_YMD",
-                read_mark=self.action_planner.last_obs_time_mark,
-                truncate=True,
-                show_actions=True,
-            )
+            chat_content_block, message_id_list = round_context.planner_content()
 
             prompt_info = await self.action_planner.build_planner_prompt(
                 chat_target_info=chat_target_info,
@@ -314,7 +297,7 @@ class BrainChatting:
                 prompt_key="brain_planner_prompt_react",
             )
             continue_flag, modified_message = await events_manager.handle_mai_events(
-                EventType.ON_PLAN, None, prompt_info[0], None, self.chat_stream.stream_id
+                EventType.ON_PLAN, round_context.event_message, prompt_info[0], None, self.chat_stream.stream_id
             )
             if not continue_flag:
                 return False
@@ -325,6 +308,7 @@ class BrainChatting:
                 action_to_use_info = await self.action_planner.plan(
                     loop_start_time=self.last_read_time,
                     available_actions=available_actions,
+                    round_context=round_context,
                 )
 
             # 检查是否有 complete_talk 动作（会停止后续迭代）
@@ -333,7 +317,9 @@ class BrainChatting:
             # 并行执行所有动作
             action_tasks = [
                 asyncio.create_task(
-                    self._execute_action(action, action_to_use_info, thinking_id, available_actions, cycle_timers)
+                    self._execute_action(
+                        action, action_to_use_info, thinking_id, available_actions, cycle_timers, round_context
+                    )
                 )
                 for action in action_to_use_info
             ]
@@ -430,41 +416,25 @@ class BrainChatting:
         logger.error(f"{self.log_prefix} 结束了当前聊天循环")
 
     async def _wait_for_new_message(self):
-        """等待新消息到达"""
-        last_check_time = self.last_read_time
-        check_interval = 1.0  # 每秒检查一次
+        """结束思考后等待真实未读输入；唤醒本身不消费消息。"""
+        await self._wait_for_unread()
 
-        # 清除事件状态，准备等待新消息
-        self._new_message_event.clear()
-
+    async def _wait_for_unread(self, timeout: float | None = None) -> bool:
+        """等待未读条件或超时，清事件之后重新检查，避免消息通知丢失。"""
+        deadline = time.monotonic() + timeout if timeout is not None else None
         while self.running:
-            # 检查是否有新消息
-            recent_messages_list = message_api.get_messages_by_time_in_chat(
-                chat_id=self.stream_id,
-                start_time=last_check_time,
-                end_time=time.time(),
-                limit=20,
-                limit_mode="latest",
-                filter_mai=True,
-                filter_command=False,
-                filter_intercept_message_level=1,
-            )
-
-            # 如果有新消息，更新 last_read_time 并返回
-            if len(recent_messages_list) >= 1:
-                self.last_read_time = time.time()
-                logger.info(f"{self.log_prefix} 检测到新消息，恢复循环")
-                return
-
-            # 等待新消息事件或超时后再次检查
+            self._new_message_event.clear()
+            if self.read_state.has_unread():
+                return True
+            remaining = 1.0 if deadline is None else min(1.0, deadline - time.monotonic())
+            if remaining <= 0:
+                return False
             try:
-                await asyncio.wait_for(self._new_message_event.wait(), timeout=check_interval)
-                # 事件被触发，说明有新消息
-                logger.info(f"{self.log_prefix} 检测到新消息事件，恢复循环")
-                return
+                await asyncio.wait_for(self._new_message_event.wait(), timeout=remaining)
             except asyncio.TimeoutError:
-                # 超时后继续检查
+                # 沿用定期检查，事件仅用于缩短等待；真正条件始终来自数据库。
                 continue
+        return False
 
     async def _handle_action(
         self,
@@ -530,9 +500,7 @@ class BrainChatting:
         message_data: "DatabaseMessages",
         selected_expressions: Optional[List[int]] = None,
     ) -> str:
-        new_message_count = message_api.count_new_messages(
-            chat_id=self.chat_stream.stream_id, start_time=self.last_read_time, end_time=time.time()
-        )
+        new_message_count = self.read_state.count_unread()
 
         need_reply = new_message_count >= random.randint(2, 4)
 
@@ -575,6 +543,7 @@ class BrainChatting:
         thinking_id: str,
         available_actions: Dict[str, ActionInfo],
         cycle_timers: Dict[str, float],
+        round_context: RoundContext,
     ):
         """执行单个动作的通用函数"""
         try:
@@ -622,6 +591,7 @@ class BrainChatting:
                             enable_tool=global_config.tool.enable_tool,
                             request_type="replyer",
                             from_plugin=False,
+                            round_context=round_context,
                         )
 
                         if not success or not llm_response or not llm_response.reply_set:
@@ -686,9 +656,6 @@ class BrainChatting:
 
                             logger.info(f"{self.log_prefix} 执行 wait 动作，等待 {wait_seconds} 秒（可被新消息打断）")
 
-                            # 清除事件状态，准备等待新消息
-                            self._new_message_event.clear()
-
                             # 记录动作信息
                             await database_api.store_action_info(
                                 chat_stream=self.chat_stream,
@@ -701,16 +668,8 @@ class BrainChatting:
                             )
 
                             # 等待指定时间，但可被新消息打断
-                            try:
-                                await asyncio.wait_for(
-                                    self._new_message_event.wait(),
-                                    timeout=wait_seconds
-                                )
-                                # 如果事件被触发，说明有新消息到达
+                            if await self._wait_for_unread(wait_seconds):
                                 logger.info(f"{self.log_prefix} wait 动作被新消息打断，提前结束等待")
-                            except asyncio.TimeoutError:
-                                # 超时正常完成
-                                pass
 
                             logger.info(f"{self.log_prefix} wait 动作完成，继续下一次思考")
 
@@ -731,9 +690,6 @@ class BrainChatting:
 
                             logger.info(f"{self.log_prefix} 执行 listening（转换为 wait）动作，等待 {wait_seconds} 秒（可被新消息打断）")
 
-                            # 清除事件状态，准备等待新消息
-                            self._new_message_event.clear()
-
                             # 记录动作信息
                             await database_api.store_action_info(
                                 chat_stream=self.chat_stream,
@@ -746,16 +702,8 @@ class BrainChatting:
                             )
 
                             # 等待指定时间，但可被新消息打断
-                            try:
-                                await asyncio.wait_for(
-                                    self._new_message_event.wait(),
-                                    timeout=wait_seconds
-                                )
-                                # 如果事件被触发，说明有新消息到达
+                            if await self._wait_for_unread(wait_seconds):
                                 logger.info(f"{self.log_prefix} listening 动作被新消息打断，提前结束等待")
-                            except asyncio.TimeoutError:
-                                # 超时正常完成
-                                pass
 
                             logger.info(f"{self.log_prefix} listening 动作完成，继续下一次思考")
 

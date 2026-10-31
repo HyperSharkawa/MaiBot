@@ -61,6 +61,18 @@ uv sync --locked --no-dev --python 3.15
 uv run --locked --no-dev python bot.py
 ```
 
+### 图片与后续消息
+
+群聊和私聊默认等待图片处理完成后，再回答后面的消息。多张图片仍会并行识别，插件命令可以立即执行。
+
+如果希望后续消息先处理，在 `config/bot_config.toml` 的 `[chat]` 中设置：
+
+```toml
+wait_for_image_recognition = false
+```
+
+修改后重启 MaiBot 生效。设回 `true` 即可恢复等待。
+
 ---
 
 ## 📌 注意事项 & License

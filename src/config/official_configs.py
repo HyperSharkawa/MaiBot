@@ -80,7 +80,10 @@ class ChatConfig(ConfigBase):
     """上下文长度"""
 
     mentioned_bot_reply: bool = True
-    """是否启用提及必回复"""
+    """提及时进入决策，不受普通消息数量门槛和聊天频率限制；是否回复仍由决策决定"""
+
+    wait_for_image_recognition: bool = True
+    """进行决策和回复前等待识图完成；同会话后续消息等待，图片仍并行识别，修改后重启生效"""
 
     at_bot_inevitable_reply: float = 1
     """@bot 必然回复，1为100%回复，0为不额外增幅"""

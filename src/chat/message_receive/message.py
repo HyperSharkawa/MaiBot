@@ -21,8 +21,15 @@ logger = get_logger("chat_message")
 # 禁用SSL警告
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# VLM 处理并发限制（避免同时处理太多图片导致卡死）
-_vlm_semaphore = asyncio.Semaphore(3)
+def contains_visual_segments(segment: Seg) -> bool:
+    """检查最终消息段是否含图片或图片表情包，递归规则与实际消息处理一致。"""
+    if segment.type in {"image", "emoji"}:
+        return True
+    if segment.type == "seglist":
+        return any(contains_visual_segments(item) for item in segment.data)
+    if segment.type == "forward":
+        return any(contains_visual_segments(MessageBase.from_dict(node).message_segment) for node in segment.data)
+    return False
 
 # 这个类是消息数据类，用于存储和管理消息数据。
 # 它定义了消息的属性，包括群组ID、用户ID、消息ID、原始消息内容、纯文本内容和时间戳。
@@ -82,6 +89,8 @@ class Message(MessageBase):
             results = await asyncio.gather(*tasks, return_exceptions=True)
             segments_text = []
             for result in results:
+                if isinstance(result, asyncio.CancelledError):
+                    raise result
                 if isinstance(result, Exception):
                     logger.error(f"处理消息段时出错: {result}")
                     continue
@@ -101,6 +110,8 @@ class Message(MessageBase):
             results = await asyncio.gather(*tasks, return_exceptions=True)
             segments_text = []
             for result in results:
+                if isinstance(result, asyncio.CancelledError):
+                    raise result
                 if isinstance(result, Exception):
                     logger.error(f"处理转发节点时出错: {result}")
                     continue
@@ -192,9 +203,8 @@ class MessageRecv(Message):
                     self.is_picid = True
                     self.is_emoji = False
                     image_manager = get_image_manager()
-                    # 使用 semaphore 限制 VLM 并发，避免同时处理太多图片
-                    async with _vlm_semaphore:
-                        _, processed_text = await image_manager.process_image(segment.data)
+                    # 并发限制由共享识别工作持有，重复图片的等待者不占名额。
+                    _, processed_text = await image_manager.process_image(segment.data)
                     return processed_text
                 return "[发了一张图片，网卡了加载不出来]"
             elif segment.type == "emoji":
@@ -203,9 +213,7 @@ class MessageRecv(Message):
                 self.is_picid = False
                 self.is_voice = False
                 if isinstance(segment.data, str):
-                    # 使用 semaphore 限制 VLM 并发
-                    async with _vlm_semaphore:
-                        return await get_image_manager().get_emoji_description(segment.data)
+                    return await get_image_manager().get_emoji_description(segment.data)
                 return "[发了一个表情包，网卡了加载不出来]"
             elif segment.type == "voice":
                 self.is_picid = False

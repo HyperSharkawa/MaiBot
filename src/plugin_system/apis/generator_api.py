@@ -23,6 +23,7 @@ from src.plugin_system.base.component_types import ActionInfo
 from src.chat.logger.plan_reply_logger import PlanReplyLogger
 
 if TYPE_CHECKING:
+    from src.chat.round_context import RoundContext
     from src.common.data_models.info_data_model import ActionPlannerInfo
     from src.common.data_models.database_data_model import DatabaseMessages
     from src.common.data_models.llm_data_model import LLMGenerationDataModel
@@ -95,6 +96,7 @@ async def generate_reply(
     request_type: str = "generator_api",
     from_plugin: bool = True,
     reply_time_point: Optional[float] = None,
+    round_context: Optional["RoundContext"] = None,
 ) -> Tuple[bool, Optional["LLMGenerationDataModel"]]:
     """生成回复
 
@@ -116,6 +118,7 @@ async def generate_reply(
         request_type: 请求类型（可选，记录LLM使用）
         from_plugin: 是否来自插件
         reply_time_point: 回复时间点
+        round_context: 核心聊天传入的本轮快照；插件省略时继续使用原时间窗口
     Returns:
         Tuple[bool, List[Tuple[str, Any]], Optional[str]]: (是否成功, 回复集合, 提示词)
     """
@@ -164,6 +167,7 @@ async def generate_reply(
             stream_id=chat_stream.stream_id if chat_stream else chat_id,
             reply_time_point=reply_time_point,
             log_reply=False,
+            round_context=round_context,
         )
         if not success:
             logger.warning("[GeneratorAPI] 回复生成失败")
@@ -219,6 +223,7 @@ async def rewrite_reply(
     reason: str = "",
     reply_to: str = "",
     request_type: str = "generator_api",
+    round_context: Optional["RoundContext"] = None,
 ) -> Tuple[bool, Optional["LLMGenerationDataModel"]]:
     """重写回复
 
@@ -257,6 +262,7 @@ async def rewrite_reply(
             raw_reply=raw_reply,
             reason=reason,
             reply_to=reply_to,
+            round_context=round_context,
         )
         reply_set: Optional[ReplySetModel] = None
         if success and llm_response and (content := llm_response.content):

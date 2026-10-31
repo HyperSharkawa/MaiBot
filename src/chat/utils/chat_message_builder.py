@@ -1,6 +1,7 @@
 import time
 import random
 import re
+from collections import defaultdict, deque
 
 from typing import List, Dict, Any, Tuple, Optional, Callable
 from rich.traceback import install
@@ -368,6 +369,7 @@ def _build_readable_messages_internal(
     message_id_list: Optional[List[Tuple[str, DatabaseMessages]]] = None,
     pic_single: bool = False,
     long_time_notice: bool = False,
+    preserve_order: bool = False,
 ) -> Tuple[str, List[Tuple[float, str, str]], Dict[str, str], int]:
     # sourcery skip: use-getitem-for-re-match-groups
     """
@@ -388,21 +390,13 @@ def _build_readable_messages_internal(
     if not messages:
         return "", [], pic_id_mapping or {}, pic_counter
 
-    detailed_messages_raw: List[Tuple[float, str, str, bool]] = []
+    detailed_messages_raw: List[Tuple[float, str, str, bool, str]] = []
 
     # 使用传入的映射字典，如果没有则创建新的
     if pic_id_mapping is None:
         pic_id_mapping = {}
     current_pic_counter = pic_counter
     pic_description_cache: Dict[str, str] = {}
-
-    # 创建时间戳到消息ID的映射，用于在消息前添加[id]标识符
-    timestamp_to_id_mapping: Dict[float, str] = {}
-    if message_id_list:
-        for msg_id, msg in message_id_list:
-            timestamp = msg.time
-            if timestamp is not None:
-                timestamp_to_id_mapping[timestamp] = msg_id
 
     def process_pic_ids(content: Optional[str]) -> str:
         """处理内容中的图片ID，将其替换为[图片x]格式"""
@@ -441,7 +435,7 @@ def _build_readable_messages_internal(
         if message.is_action_record:
             # 对于动作记录，也处理图片ID
             content = process_pic_ids(message.display_message)
-            detailed_messages_raw.append((message.time, message.user_nickname, content, True))
+            detailed_messages_raw.append((message.time, message.user_nickname, content, True, ""))
             continue
 
         platform = message.user_platform
@@ -473,21 +467,22 @@ def _build_readable_messages_internal(
         if content := replace_user_references(content, platform, replace_bot_name=replace_bot_name):
             if getattr(message, "is_command", False):
                 content = f"[is_command=True] {content}"
-            detailed_messages_raw.append((timestamp, person_name, content, False))
+            detailed_messages_raw.append((timestamp, person_name, content, False, message.prompt_id))
 
     if not detailed_messages_raw:
         return "", [], pic_id_mapping, current_pic_counter
 
-    detailed_messages_raw.sort(key=lambda x: x[0])  # 按时间戳(第一个元素)升序排序，越早的消息排在前面
-    detailed_message: List[Tuple[float, str, str, bool]] = []
+    if not preserve_order:
+        detailed_messages_raw.sort(key=lambda x: x[0])
+    detailed_message: List[Tuple[float, str, str, bool, str]] = []
 
     # 2. 应用消息截断逻辑
     messages_count = len(detailed_messages_raw)
     if truncate and messages_count > 0:
-        for i, (timestamp, name, content, is_action) in enumerate(detailed_messages_raw):
+        for i, (timestamp, name, content, is_action, prompt_id) in enumerate(detailed_messages_raw):
             # 对于动作记录，不进行截断
             if is_action:
-                detailed_message.append((timestamp, name, content, is_action))
+                detailed_message.append((timestamp, name, content, is_action, prompt_id))
                 continue
 
             percentile = i / messages_count  # 计算消息在列表中的位置百分比 (0 <= percentile < 1)
@@ -511,7 +506,7 @@ def _build_readable_messages_internal(
             if 0 < limit < original_len:
                 truncated_content = f"{content[:limit]}{replace_content}"  # pyright: ignore[reportPossiblyUnboundVariable]
 
-            detailed_message.append((timestamp, name, truncated_content, is_action))
+            detailed_message.append((timestamp, name, truncated_content, is_action, prompt_id))
     else:
         # 如果不截断，直接使用原始列表
         detailed_message = detailed_messages_raw
@@ -520,7 +515,7 @@ def _build_readable_messages_internal(
     output_lines: List[str] = []
 
     prev_timestamp: Optional[float] = None
-    for timestamp, name, content, is_action in detailed_message:
+    for timestamp, name, content, is_action, message_id in detailed_message:
         # 检查是否需要插入长时间间隔提示
         if long_time_notice and prev_timestamp is not None:
             time_diff = timestamp - prev_timestamp
@@ -545,8 +540,7 @@ def _build_readable_messages_internal(
         
         readable_time = translate_timestamp_to_human_readable(timestamp, mode=timestamp_mode)
 
-        # 查找消息id（如果有）并构建id_prefix
-        message_id = timestamp_to_id_mapping.get(timestamp, "")
+        # 编号随记录传递，具有相同时间戳的消息不会覆盖彼此。
         id_prefix = f"[{message_id}]" if message_id else ""
 
         if is_action:
@@ -563,7 +557,7 @@ def _build_readable_messages_internal(
     # 返回格式化后的字符串、消息详情列表、图片映射字典和更新后的计数器
     return (
         formatted_string,
-        [(t, n, c) for t, n, c, is_action in detailed_message if not is_action],
+        [(t, n, c) for t, n, c, is_action, _ in detailed_message if not is_action],
         pic_id_mapping,
         current_pic_counter,
     )
@@ -692,12 +686,15 @@ def build_readable_messages_with_id(
     show_pic: bool = True,
     remove_emoji_stickers: bool = False,
     pic_single: bool = False,
+    unread_ids: Optional[frozenset[int]] = None,
+    action_records: Optional[tuple[dict, ...]] = None,
+    assigned_ids: Optional[List[Tuple[str, DatabaseMessages]]] = None,
 ) -> Tuple[str, List[Tuple[str, DatabaseMessages]]]:
     """
     将消息列表转换为可读的文本格式，并返回原始(时间戳, 昵称, 内容)列表。
     允许通过参数控制格式化行为。
     """
-    message_id_list = assign_message_ids(messages)
+    message_id_list = assigned_ids if assigned_ids is not None else assign_message_ids(messages)
 
     formatted_string = build_readable_messages(
         messages=messages,
@@ -710,6 +707,8 @@ def build_readable_messages_with_id(
         message_id_list=message_id_list,
         remove_emoji_stickers=remove_emoji_stickers,
         pic_single=pic_single,
+        unread_ids=unread_ids,
+        action_records=action_records,
     )
 
     return formatted_string, message_id_list
@@ -727,6 +726,8 @@ def build_readable_messages(
     remove_emoji_stickers: bool = False,
     pic_single: bool = False,
     long_time_notice: bool = False,
+    unread_ids: Optional[frozenset[int]] = None,
+    action_records: Optional[tuple[dict, ...]] = None,
 ) -> str:  # sourcery skip: extract-method
     """
     将消息列表转换为可读的文本格式。
@@ -765,6 +766,10 @@ def build_readable_messages(
 
         messages = filtered_messages
 
+    # 同一个对象重复出现在输入时也逐次取编号，避免用时间或内容推断身份。
+    identifiers = defaultdict(deque)
+    for prompt_id, original in message_id_list or []:
+        identifiers[id(original)].append(prompt_id)
     copy_messages: List[MessageAndActionModel] = []
     for msg in messages:
         if remove_emoji_stickers:
@@ -776,57 +781,54 @@ def build_readable_messages(
             copy_messages.append(model)
         else:
             copy_messages.append(MessageAndActionModel.from_DatabaseMessages(msg))
+        if identifiers[id(msg)]:
+            copy_messages[-1].prompt_id = identifiers[id(msg)].popleft()
 
     if show_actions and copy_messages:
-        # 获取所有消息的时间范围
-        min_time = min(msg.time or 0 for msg in copy_messages)
-        max_time = max(msg.time or 0 for msg in copy_messages)
-
-        # 从第一条消息中获取chat_id
-        chat_id = messages[0].chat_id if messages else None
-
-        # 获取这个时间范围内的动作记录，并匹配chat_id
-        actions_in_range = (
-            ActionRecords.select()
-            .where(
-                (ActionRecords.time >= min_time) & (ActionRecords.time <= max_time) & (ActionRecords.chat_id == chat_id)
+        if action_records is None:
+            # 旧调用继续按时间读取动作；聊天轮次显式传入已冻结的记录，避免再次读库。
+            min_time = min(msg.time or 0 for msg in copy_messages)
+            max_time = max(msg.time or 0 for msg in copy_messages)
+            chat_id = messages[0].chat_id
+            actions_in_range = (
+                ActionRecords.select()
+                .where(
+                    (ActionRecords.time >= min_time) & (ActionRecords.time <= max_time) & (ActionRecords.chat_id == chat_id)
+                )
+                .order_by(ActionRecords.time)
             )
-            .order_by(ActionRecords.time)
-        )
-
-        # 获取最新消息之后的第一个动作记录
-        action_after_latest = (
-            ActionRecords.select()
-            .where((ActionRecords.time > max_time) & (ActionRecords.chat_id == chat_id))
-            .order_by(ActionRecords.time)
-            .limit(1)
-        )
-
-        # 合并两部分动作记录
-        actions: List[ActionRecords] = list(actions_in_range) + list(action_after_latest)
+            action_after_latest = (
+                ActionRecords.select()
+                .where((ActionRecords.time > max_time) & (ActionRecords.chat_id == chat_id))
+                .order_by(ActionRecords.time)
+                .limit(1)
+            )
+            actions = [*actions_in_range.dicts(), *action_after_latest.dicts()]
+        else:
+            actions = action_records
 
         # 将动作记录转换为消息格式
         for action in actions:
             # 只有当build_into_prompt为True时才添加动作记录
-            if action.action_build_into_prompt:
+            if action["action_build_into_prompt"]:
                 action_msg = MessageAndActionModel(
-                    time=float(action.time),  # type: ignore
+                    time=float(action["time"]),
                     user_id=global_config.bot.qq_account,  # 使用机器人的QQ账号
                     user_platform=global_config.bot.platform,  # 使用机器人的平台
                     user_nickname=global_config.bot.nickname,  # 使用机器人的用户名
                     user_cardname="",  # 机器人没有群名片
-                    processed_plain_text=f"{action.action_prompt_display}",
-                    display_message=f"{action.action_prompt_display}",
-                    chat_info_platform=str(action.chat_info_platform),
+                    processed_plain_text=action["action_prompt_display"],
+                    display_message=action["action_prompt_display"],
+                    chat_info_platform=str(action["chat_info_platform"]),
                     is_action_record=True,  # 添加标识字段
-                    action_name=str(action.action_name),  # 保存动作名称
+                    action_name=str(action["action_name"]),
                 )
                 copy_messages.append(action_msg)
 
-        # 重新按时间排序
-        copy_messages.sort(key=lambda x: x.time or 0)
+        if unread_ids is None:
+            copy_messages.sort(key=lambda x: x.time or 0)
 
-    if read_mark <= 0:
+    if read_mark <= 0 and unread_ids is None:
         # 没有有效的 read_mark，直接格式化所有消息
         formatted_string, _, pic_id_mapping, _ = _build_readable_messages_internal(
             copy_messages,
@@ -845,9 +847,13 @@ def build_readable_messages(
                 return f"{pic_mapping_info}\n\n{formatted_string}"
         return formatted_string
     else:
-        # 按 read_mark 分割消息
-        messages_before_mark = [msg for msg in copy_messages if (msg.time or 0) <= read_mark]
-        messages_after_mark = [msg for msg in copy_messages if (msg.time or 0) > read_mark]
+        if unread_ids is None:
+            messages_before_mark = [msg for msg in copy_messages if (msg.time or 0) <= read_mark]
+            messages_after_mark = [msg for msg in copy_messages if (msg.time or 0) > read_mark]
+        else:
+            # 入库顺序与平台时间独立；迟到消息必须出现在未读区。
+            messages_before_mark = [msg for msg in copy_messages if msg.database_id not in unread_ids]
+            messages_after_mark = [msg for msg in copy_messages if msg.database_id in unread_ids]
 
         # 共享的图片映射字典和计数器
         pic_id_mapping = {}
@@ -865,6 +871,7 @@ def build_readable_messages(
             message_id_list=message_id_list,
             pic_single=pic_single,
             long_time_notice=long_time_notice,
+            preserve_order=unread_ids is not None,
         )
         formatted_after, _, pic_id_mapping, _ = _build_readable_messages_internal(
             messages_after_mark,
@@ -877,6 +884,7 @@ def build_readable_messages(
             message_id_list=message_id_list,
             pic_single=pic_single,
             long_time_notice=long_time_notice,
+            preserve_order=unread_ids is not None,
         )
 
         read_mark_line = "\n--- 以上消息是你已经看过，请关注以下未读的新消息---\n"

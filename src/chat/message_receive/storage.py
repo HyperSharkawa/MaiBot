@@ -30,8 +30,8 @@ class MessageStorage:
             return []
 
     @staticmethod
-    async def store_message(message: Union[MessageSending, MessageRecv], chat_stream: ChatStream) -> None:
-        """存储消息到数据库"""
+    async def store_message(message: Union[MessageSending, MessageRecv], chat_stream: ChatStream) -> int | None:
+        """存储消息并返回实际行 ID；通知或存储失败返回空值，调用方不得据此发布新消息。"""
         try:
             # 通知消息不存储
             if isinstance(message, MessageRecv) and message.is_notify:
@@ -103,7 +103,7 @@ class MessageStorage:
             # 安全地获取 user_info, 如果为 None 则视为空字典 (以防万一)
             user_info_from_chat = chat_info_dict.get("user_info") or {}
 
-            Messages.create(
+            stored = Messages.create(
                 message_id=msg_id,
                 time=float(message.message_info.time),  # type: ignore
                 chat_id=chat_stream.stream_id,
@@ -143,6 +143,7 @@ class MessageStorage:
                 key_words_lite=key_words_lite,
                 selected_expressions=selected_expressions,
             )
+            return stored.id
         except Exception:
             logger.exception("存储消息失败")
             logger.error(f"消息：{message}")

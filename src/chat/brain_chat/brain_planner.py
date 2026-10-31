@@ -27,6 +27,7 @@ from src.plugin_system.base.component_types import ActionInfo, ComponentType, Ac
 from src.plugin_system.core.component_registry import component_registry
 
 if TYPE_CHECKING:
+    from src.chat.round_context import RoundContext
     from src.common.data_models.info_data_model import TargetPersonInfo
     from src.common.data_models.database_data_model import DatabaseMessages
 
@@ -257,6 +258,7 @@ class BrainPlanner:
         self,
         available_actions: Dict[str, ActionInfo],
         loop_start_time: float = 0.0,
+        round_context: Optional["RoundContext"] = None,
     ) -> List[ActionPlannerInfo]:
         # sourcery skip: use-named-expression
         """
@@ -264,29 +266,31 @@ class BrainPlanner:
         """
         plan_start = time.perf_counter()
 
-        # 获取聊天上下文
-        message_list_before_now = get_raw_msg_before_timestamp_with_chat(
-            chat_id=self.chat_id,
-            timestamp=time.time(),
-            limit=int(global_config.chat.max_context_size * 0.6),
-            filter_intercept_message_level=1,
-        )
-        message_id_list: list[Tuple[str, "DatabaseMessages"]] = []
-        chat_content_block, message_id_list = build_readable_messages_with_id(
-            messages=message_list_before_now,
-            timestamp_mode="normal_no_YMD",
-            read_mark=self.last_obs_time_mark,
-            truncate=True,
-            show_actions=True,
-        )
-
-        message_list_before_now_short = message_list_before_now[-int(global_config.chat.max_context_size * 0.3) :]
-        chat_content_block_short, message_id_list_short = build_readable_messages_with_id(
-            messages=message_list_before_now_short,
-            timestamp_mode="normal_no_YMD",
-            truncate=False,
-            show_actions=False,
-        )
+        if round_context is not None:
+            chat_content_block, message_id_list = round_context.planner_content()
+            chat_content_block_short, message_id_list_short = round_context.planner_content(short=True)
+        else:
+            # 独立 Planner 调用保持原行为，主循环的继续思考同样使用显式快照。
+            message_list_before_now = get_raw_msg_before_timestamp_with_chat(
+                chat_id=self.chat_id,
+                timestamp=time.time(),
+                limit=int(global_config.chat.max_context_size * 0.6),
+                filter_intercept_message_level=1,
+            )
+            chat_content_block, message_id_list = build_readable_messages_with_id(
+                messages=message_list_before_now,
+                timestamp_mode="normal_no_YMD",
+                read_mark=self.last_obs_time_mark,
+                truncate=True,
+                show_actions=True,
+            )
+            message_list_before_now_short = message_list_before_now[-int(global_config.chat.max_context_size * 0.3) :]
+            chat_content_block_short, message_id_list_short = build_readable_messages_with_id(
+                messages=message_list_before_now_short,
+                timestamp_mode="normal_no_YMD",
+                truncate=False,
+                show_actions=False,
+            )
 
         self.last_obs_time_mark = time.time()
 

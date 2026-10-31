@@ -16,7 +16,9 @@ class Heartflow:
     def __init__(self):
         self.heartflow_chat_list: Dict[Any, HeartFChatting | BrainChatting] = {}
 
-    async def get_or_create_heartflow_chat(self, chat_id: Any) -> Optional[HeartFChatting | BrainChatting]:
+    async def get_or_create_heartflow_chat(
+        self, chat_id: Any, first_message_id: int
+    ) -> Optional[HeartFChatting | BrainChatting]:
         """获取或创建一个新的HeartFChatting实例"""
         try:
             if chat_id in self.heartflow_chat_list:
@@ -27,9 +29,9 @@ class Heartflow:
                 if not chat_stream:
                     raise ValueError(f"未找到 chat_id={chat_id} 的聊天流")
                 if chat_stream.group_info:
-                    new_chat = HeartFChatting(chat_id=chat_id)
+                    new_chat = HeartFChatting(chat_id=chat_id, first_message_id=first_message_id)
                 else:
-                    new_chat = BrainChatting(chat_id=chat_id)
+                    new_chat = BrainChatting(chat_id=chat_id, first_message_id=first_message_id)
                 await new_chat.start()
                 self.heartflow_chat_list[chat_id] = new_chat
                 return new_chat

@@ -24,11 +24,8 @@ from src.bw_learner.message_recorder import extract_and_distribute_messages
 from src.person_info.person_info import Person
 from src.plugin_system.base.component_types import EventType, ActionInfo
 from src.plugin_system.core import events_manager
-from src.plugin_system.apis import generator_api, send_api, message_api, database_api
-from src.chat.utils.chat_message_builder import (
-    build_readable_messages_with_id,
-    get_raw_msg_before_timestamp_with_chat,
-)
+from src.plugin_system.apis import generator_api, send_api, database_api
+from src.chat.round_context import ChatReadState, RoundContext
 from src.chat.utils.utils import record_replyer_action_temp
 from src.memory_system.chat_history_summarizer import ChatHistorySummarizer
 
@@ -68,7 +65,7 @@ class HeartFChatting:
     其生命周期现在由其关联的 SubHeartflow 的 FOCUSED 状态控制。
     """
 
-    def __init__(self, chat_id: str):
+    def __init__(self, chat_id: str, first_message_id: int):
         """
         HeartFChatting 初始化函数
 
@@ -99,6 +96,7 @@ class HeartFChatting:
         self._current_cycle_detail: CycleDetail = None  # type: ignore
 
         self.last_read_time = time.time() - 2
+        self.read_state = ChatReadState(chat_id, first_message_id, self.chat_stream.platform)
 
         self.is_mute = False
 
@@ -180,15 +178,22 @@ class HeartFChatting:
         )
 
     async def _loopbody(self):
-        recent_messages_list = message_api.get_messages_by_time_in_chat(
-            chat_id=self.stream_id,
-            start_time=self.last_read_time,
-            end_time=time.time(),
-            limit=20,
-            limit_mode="latest",
-            filter_mai=True,
-            filter_command=False,
-            filter_intercept_message_level=0,
+        """检查最早未读批次；只有实际接纳时才推进读取位置。"""
+        if not self.read_state.has_unread():
+            await asyncio.sleep(0.2)
+            return True
+        stream = get_chat_manager().get_stream(self.stream_id)
+        round_context = self.read_state.capture(
+            global_config.chat.max_context_size, stream.context.get_last_message()
+        )
+        recent_messages_list = list(round_context.stored.unread)
+        mentioned_message = next(
+            (
+                message
+                for message in reversed(recent_messages_list)
+                if (message.is_mentioned or message.is_at) and global_config.chat.mentioned_bot_reply
+            ),
+            None,
         )
 
         # 根据连续 no_reply 次数动态调整阈值
@@ -202,29 +207,29 @@ class HeartFChatting:
         else:
             threshold = 1
 
-        if len(recent_messages_list) >= threshold:
+        if mentioned_message or round_context.stored.available_count >= threshold:
             # for message in recent_messages_list:
             # print(message.processed_plain_text)
 
-            self.last_read_time = time.time()
-
-            # !此处使at或者提及必定回复
-            mentioned_message = None
-            for message in recent_messages_list:
-                if (message.is_mentioned or message.is_at) and global_config.chat.mentioned_bot_reply:
-                    mentioned_message = message
+            if not self.read_state.admit(round_context):
+                return True
+            self.last_read_time = round_context.started_at
 
             # logger.info(f"{self.log_prefix} 当前talk_value: {global_config.chat.get_talk_value(self.stream_id)}")
 
             # *控制频率用
             if mentioned_message:
-                await self._observe(recent_messages_list=recent_messages_list, force_reply_message=mentioned_message)
+                await self._observe(
+                    recent_messages_list=recent_messages_list,
+                    force_reply_message=mentioned_message,
+                    round_context=round_context,
+                )
             elif (
                 random.random()
                 < global_config.chat.get_talk_value(self.stream_id)
                 * frequency_control_manager.get_or_create_frequency_control(self.stream_id).get_talk_frequency_adjust()
             ):
-                await self._observe(recent_messages_list=recent_messages_list)
+                await self._observe(recent_messages_list=recent_messages_list, round_context=round_context)
             else:
                 # 没有提到，继续保持沉默，等待5秒防止频繁触发
                 await asyncio.sleep(10)
@@ -290,6 +295,8 @@ class HeartFChatting:
         self,  # interest_value: float = 0.0,
         recent_messages_list: Optional[List["DatabaseMessages"]] = None,
         force_reply_message: Optional["DatabaseMessages"] = None,
+        *,
+        round_context: RoundContext,
     ) -> bool:  # sourcery skip: merge-else-if-into-elif, remove-redundant-if
         if recent_messages_list is None:
             recent_messages_list = []
@@ -310,7 +317,7 @@ class HeartFChatting:
                 logger.info(f"{self.log_prefix} ReflectTracker resolved and removed.")
 
         start_time = time.time()
-        async with global_prompt_manager.async_message_scope(self.chat_stream.context.get_template_name()):
+        async with global_prompt_manager.async_message_scope(round_context.template_name):
             # 通过 MessageRecorder 统一提取消息并分发给 expression_learner 和 jargon_miner
             # 在 replyer 执行时触发，统一管理时间窗口，避免重复获取消息
             asyncio.create_task(extract_and_distribute_messages(self.stream_id))
@@ -329,7 +336,7 @@ class HeartFChatting:
             # 第一步：动作检查
             available_actions: Dict[str, ActionInfo] = {}
             try:
-                await self.action_modifier.modify_actions()
+                await self.action_modifier.modify_actions(round_context=round_context)
                 available_actions = self.action_manager.get_using_actions()
             except Exception as e:
                 logger.error(f"{self.log_prefix} 动作修改失败: {e}")
@@ -337,19 +344,7 @@ class HeartFChatting:
             # 执行planner
             is_group_chat, chat_target_info, _ = self.action_planner.get_necessary_info()
 
-            message_list_before_now = get_raw_msg_before_timestamp_with_chat(
-                chat_id=self.stream_id,
-                timestamp=time.time(),
-                limit=int(global_config.chat.max_context_size * 0.6),
-                filter_intercept_message_level=1,
-            )
-            chat_content_block, message_id_list = build_readable_messages_with_id(
-                messages=message_list_before_now,
-                timestamp_mode="normal_no_YMD",
-                read_mark=self.action_planner.last_obs_time_mark,
-                truncate=True,
-                show_actions=True,
-            )
+            chat_content_block, message_id_list = round_context.planner_content()
 
             prompt_info = await self.action_planner.build_planner_prompt(
                 is_group_chat=is_group_chat,
@@ -359,7 +354,7 @@ class HeartFChatting:
                 message_id_list=message_id_list,
             )
             continue_flag, modified_message = await events_manager.handle_mai_events(
-                EventType.ON_PLAN, None, prompt_info[0], None, self.chat_stream.stream_id
+                EventType.ON_PLAN, round_context.event_message, prompt_info[0], None, self.chat_stream.stream_id
             )
             if not continue_flag:
                 return False
@@ -371,6 +366,7 @@ class HeartFChatting:
                     loop_start_time=self.last_read_time,
                     available_actions=available_actions,
                     force_reply_message=force_reply_message,
+                    round_context=round_context,
                 )
 
             logger.info(
@@ -380,7 +376,9 @@ class HeartFChatting:
             # 3. 并行执行所有动作
             action_tasks = [
                 asyncio.create_task(
-                    self._execute_action(action, action_to_use_info, thinking_id, available_actions, cycle_timers)
+                    self._execute_action(
+                        action, action_to_use_info, thinking_id, available_actions, cycle_timers, round_context
+                    )
                 )
                 for action in action_to_use_info
             ]
@@ -540,9 +538,7 @@ class HeartFChatting:
                     logger.info(f"{self.log_prefix} LLM 决定使用引用回复")
         else:
             # 如果配置为 false，使用原来的模式
-            new_message_count = message_api.count_new_messages(
-                chat_id=self.chat_stream.stream_id, start_time=self.last_read_time, end_time=time.time()
-            )
+            new_message_count = self.read_state.count_unread()
             need_reply = new_message_count >= random.randint(2, 3) or time.time() - self.last_read_time > 90
             if need_reply:
                 logger.info(f"{self.log_prefix} 从思考到回复，共有{new_message_count}条新消息，使用引用回复，或者上次回复时间超过90秒")
@@ -583,6 +579,7 @@ class HeartFChatting:
         thinking_id: str,
         available_actions: Dict[str, ActionInfo],
         cycle_timers: Dict[str, float],
+        round_context: RoundContext,
     ):
         """执行单个动作的通用函数"""
         try:
@@ -689,6 +686,7 @@ class HeartFChatting:
                         from_plugin=False,
                         reply_time_point=action_planner_info.action_data.get("loop_start_time", time.time()),
                         think_level=think_level,
+                        round_context=round_context,
                     )
 
                     if not success or not llm_response or not llm_response.reply_set:

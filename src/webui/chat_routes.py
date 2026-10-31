@@ -140,6 +140,13 @@ class ChatHistoryManager:
         target_group_id = group_id if group_id else WEBUI_CHAT_GROUP_ID
         try:
             deleted = Messages.delete().where(Messages.chat_info_group_id == target_group_id).execute()
+            from src.chat.heart_flow.heartflow import heartflow
+
+            # 普通 SQLite 行 ID 可以重用；成功清空后同步失效旧轮次的读取代次。
+            for chat in heartflow.heartflow_chat_list.values():
+                group = chat.chat_stream.group_info
+                if group and str(group.group_id) == str(target_group_id):
+                    chat.read_state.reset()
             logger.info(f"已清空 {deleted} 条聊天记录 (group_id={target_group_id})")
             return deleted
         except Exception as e:

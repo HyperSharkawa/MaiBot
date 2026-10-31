@@ -10,6 +10,8 @@ if TYPE_CHECKING:
 
 @dataclass
 class MessageAndActionModel(BaseDataModel):
+    """用于一次提示词格式化的消息或动作；临时编号不写入数据库。"""
+
     chat_id: str = field(default_factory=str)
     time: float = field(default_factory=float)
     user_id: str = field(default_factory=str)
@@ -23,6 +25,8 @@ class MessageAndActionModel(BaseDataModel):
     action_name: Optional[str] = None
     is_command: bool = field(default=False)
     intercept_message_level: int = field(default=0)
+    database_id: Optional[int] = None
+    prompt_id: str = ""
 
     @classmethod
     def from_DatabaseMessages(cls, message: "DatabaseMessages"):
@@ -38,6 +42,7 @@ class MessageAndActionModel(BaseDataModel):
             chat_info_platform=message.chat_info.platform,
             is_command=message.is_command,
             intercept_message_level=getattr(message, "intercept_message_level", 0),
+            database_id=getattr(message, "id", None),
         )
 
 

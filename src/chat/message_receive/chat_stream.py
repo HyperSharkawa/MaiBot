@@ -194,7 +194,12 @@ class ChatManager:
         return hashlib.md5(key.encode()).hexdigest()
 
     async def get_or_create_stream(
-        self, platform: str, user_info: UserInfo, group_info: Optional[GroupInfo] = None
+        self,
+        platform: str,
+        user_info: UserInfo,
+        group_info: Optional[GroupInfo] = None,
+        *,
+        publish_context: bool = True,
     ) -> ChatStream:
         """获取或创建聊天流
 
@@ -202,6 +207,7 @@ class ChatManager:
             platform: 平台标识
             user_info: 用户信息
             group_info: 群组信息（可选）
+            publish_context: 是否绑定已经发布的最近消息；接收阶段的命令路由可暂不绑定
 
         Returns:
             ChatStream: 聊天流对象
@@ -223,9 +229,13 @@ class ChatManager:
                     stream.group_info = group_info
                 from .message import MessageRecv  # 延迟导入，避免循环引用
 
-                if stream_id in self.last_messages and isinstance(self.last_messages[stream_id], MessageRecv):
+                if (
+                    publish_context
+                    and stream_id in self.last_messages
+                    and isinstance(self.last_messages[stream_id], MessageRecv)
+                ):
                     stream.set_context(self.last_messages[stream_id])
-                else:
+                elif publish_context:
                     logger.error(f"聊天流 {stream_id} 不在最后消息列表中，可能是新创建的")
                 return stream
 
@@ -280,9 +290,13 @@ class ChatManager:
         stream = copy.deepcopy(stream)
         from .message import MessageRecv  # 延迟导入，避免循环引用
 
-        if stream_id in self.last_messages and isinstance(self.last_messages[stream_id], MessageRecv):
+        if (
+            publish_context
+            and stream_id in self.last_messages
+            and isinstance(self.last_messages[stream_id], MessageRecv)
+        ):
             stream.set_context(self.last_messages[stream_id])
-        else:
+        elif publish_context:
             logger.error(f"聊天流 {stream_id} 不在最后消息列表中，可能是新创建的")
         # 保存到内存和数据库
         self.streams[stream_id] = stream

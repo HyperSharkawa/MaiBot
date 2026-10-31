@@ -1,4 +1,5 @@
-import traceback
+lazy import traceback
+import copy
 import os
 import re
 
@@ -8,7 +9,8 @@ from maim_message import UserInfo, Seg, GroupInfo
 from src.common.logger import get_logger
 from src.config.config import global_config
 from src.chat.message_receive.chat_stream import get_chat_manager
-from src.chat.message_receive.message import MessageRecv
+from src.chat.message_receive.message import MessageRecv, contains_visual_segments
+from src.chat.message_receive.incoming_order import IncomingOrder
 from src.chat.message_receive.storage import MessageStorage
 from src.chat.heart_flow.heartflow_message_processor import HeartFCMessageReceiver
 from src.chat.utils.prompt_builder import Prompt, global_prompt_manager
@@ -73,6 +75,7 @@ class ChatBot:
         self.bot = None  # bot 实例引用
         self._started = False
         self.heartflow_message_receiver = HeartFCMessageReceiver()  # 新增
+        self.incoming_order = IncomingOrder()
 
     async def _ensure_started(self):
         """确保所有任务已启动"""
@@ -131,6 +134,8 @@ class ChatBot:
 
                 except Exception as e:
                     logger.error(f"执行命令时出错: {command_class.__name__} - {e}")
+                    # 此路径明确停止普通聊天，存储标记必须保持相同含义。
+                    message.intercept_message_level = max(message.intercept_message_level, 1)
                     logger.error(traceback.format_exc())
 
                     try:
@@ -236,10 +241,8 @@ class ChatBot:
         - 表情包处理
         - 性能计时
         """
+        receipt = None
         try:
-            # 确保所有任务已启动
-            await self._ensure_started()
-
             if message_data["message_info"].get("group_info") is not None:
                 message_data["message_info"]["group_info"]["group_id"] = str(
                     message_data["message_info"]["group_info"]["group_id"]
@@ -254,6 +257,15 @@ class ChatBot:
             group_info = message.message_info.group_info
             user_info = message.message_info.user_info
 
+            if global_config.chat.wait_for_image_recognition:
+                stream_id = get_chat_manager().get_stream_id(
+                    message.message_info.platform,
+                    group_info.group_id if group_info else user_info.user_id,
+                    is_group=group_info is not None,
+                )
+                receipt = self.incoming_order.reserve(stream_id)
+            await self._ensure_started()
+
             continue_flag, modified_message = await events_manager.handle_mai_events(
                 EventType.ON_MESSAGE_PRE_PROCESS, message
             )
@@ -261,6 +273,8 @@ class ChatBot:
                 return
             if modified_message and modified_message._modify_flags.modify_message_segments:
                 message.message_segment = Seg(type="seglist", data=modified_message.message_segments)
+            if receipt is not None:
+                receipt.classify(contains_visual_segments(message.message_segment))
 
             if await self.handle_notice_message(message):
                 pass
@@ -282,14 +296,15 @@ class ChatBot:
             ):
                 return
 
-            get_chat_manager().register_message(message)
-
             chat = await get_chat_manager().get_or_create_stream(
                 platform=message.message_info.platform,  # type: ignore
                 user_info=user_info,  # type: ignore
                 group_info=group_info,
+                publish_context=False,
             )
-
+            # 命令拥有本条消息的路由副本，不能提前覆盖普通聊天的最近消息上下文。
+            chat = copy.copy(chat)
+            chat.set_context(message)
             message.update_chat_stream(chat)
 
             # if await self.check_ban_content(message):
@@ -298,6 +313,9 @@ class ChatBot:
 
             # 命令处理 - 使用新插件系统检查并处理命令
             is_command, cmd_result, continue_process = await self._process_commands(message)
+
+            if receipt is not None:
+                await receipt.wait_until_publishable()
 
             # 如果是命令且不需要继续处理，则直接返回
             if is_command and not continue_process:
@@ -324,6 +342,8 @@ class ChatBot:
                 template_group_name = None
 
             async def preprocess():
+                """在所有放行条件满足后发布当前消息，然后存储并通知原聊天循环。"""
+                get_chat_manager().register_message(message)
                 await self.heartflow_message_receiver.process_message(message)
 
             if template_group_name:
@@ -335,6 +355,9 @@ class ChatBot:
         except Exception as e:
             logger.error(f"预处理消息失败: {e}")
             traceback.print_exc()
+        finally:
+            if receipt is not None:
+                receipt.close()
 
 
 # 创建全局ChatBot实例
