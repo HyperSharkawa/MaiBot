@@ -2,10 +2,32 @@ name: 构建 WebUI
 
 on:
   pull_request:
-    paths: ['webui/**', 'src/webui/frontend_contract.py', 'scripts/build_webui.py', 'scripts/publish_webui.py', 'tests/test_frontend*.py', '.github/workflows/webui.yml']
+    paths:
+      - 'webui/**'
+      - 'src/webui/frontend*.py'
+      - 'src/webui/frontend_host/**'
+      - 'src/webui/webui_server.py'
+      - 'scripts/build_webui.py'
+      - 'scripts/publish_webui.py'
+      - 'tests/test_frontend*.py'
+      - 'tests/test_webui_host_integration.py'
+      - 'tests/webui_*.py'
+      - 'tests/webui_*.cjs'
+      - '.github/workflows/webui.yml'
   push:
     branches: [main]
-    paths: ['webui/**', 'src/webui/frontend_contract.py', 'scripts/build_webui.py', 'scripts/publish_webui.py', 'tests/test_frontend*.py', '.github/workflows/webui.yml']
+    paths:
+      - 'webui/**'
+      - 'src/webui/frontend*.py'
+      - 'src/webui/frontend_host/**'
+      - 'src/webui/webui_server.py'
+      - 'scripts/build_webui.py'
+      - 'scripts/publish_webui.py'
+      - 'tests/test_frontend*.py'
+      - 'tests/test_webui_host_integration.py'
+      - 'tests/webui_*.py'
+      - 'tests/webui_*.cjs'
+      - '.github/workflows/webui.yml'
   workflow_dispatch:
 
 permissions:
