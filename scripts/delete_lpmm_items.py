@@ -17,8 +17,9 @@ except Exception:
 # 确保能找到 src 包
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from src.chat.knowledge.embedding_store import EmbeddingManager
-from src.chat.knowledge.kg_manager import KGManager
+lazy from src.chat.knowledge.embedding_store import EmbeddingManager
+lazy from src.chat.knowledge.kg_manager import KGManager
+from src.chat.knowledge.dependencies import require_lpmm_for_cli
 from src.common.logger import get_logger
 from src.chat.knowledge.utils.hash import get_sha256
 
@@ -99,6 +100,7 @@ def main():
         ),
     )
     args = parser.parse_args()
+    require_lpmm_for_cli()
 
     # 至少需要一种来源
     if not (args.hash_file or args.openie_file or args.raw_file or args.search_text):

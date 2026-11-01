@@ -15,11 +15,14 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from src.common.logger import get_logger
 from src.config.config import global_config
 from src.chat.knowledge import lpmm_start_up, get_qa_manager
+from src.chat.knowledge.dependencies import require_lpmm_for_cli
 
 logger = get_logger("refresh_lpmm_knowledge")
 
 
 def main() -> None:
+    """在独立进程中检查依赖并调用原有知识库刷新流程。"""
+    require_lpmm_for_cli()
     logger.info("开始刷新 LPMM 知识库（重新加载向量库与 KG）...")
 
     if not global_config.lpmm_knowledge.enable:

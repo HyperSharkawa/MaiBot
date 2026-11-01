@@ -12,9 +12,10 @@ from time import sleep
 from typing import Optional
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from src.chat.knowledge.embedding_store import EmbeddingManager
+lazy from src.chat.knowledge.embedding_store import EmbeddingManager
 from src.chat.knowledge.open_ie import OpenIE
-from src.chat.knowledge.kg_manager import KGManager
+lazy from src.chat.knowledge.kg_manager import KGManager
+from src.chat.knowledge.dependencies import require_lpmm_for_cli
 from src.common.logger import get_logger
 from src.chat.knowledge.utils.hash import get_sha256
 
@@ -187,6 +188,8 @@ def handle_import_openie(
 
 
 async def main_async(non_interactive: bool = False) -> bool:  # sourcery skip: dict-comprehension
+    """先确认依赖可用，再按原有确认流程导入 OpenIE 数据。"""
+    require_lpmm_for_cli()
     # 新增确认提示
     if non_interactive:
         logger.warning(

@@ -39,7 +39,7 @@ echo "============================"
 run_python_script() {
     local script_name=$1
     echo "🔄 Running $script_name"
-    if ! uv run --locked --no-dev --python 3.15.2 python "$SCRIPTS_DIR/$script_name"; then
+    if ! uv run --locked --no-dev --extra lpmm --python 3.15.2 python "$SCRIPTS_DIR/$script_name"; then
         echo "❌ $script_name failed" >&2
         exit 1
     fi

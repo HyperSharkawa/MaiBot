@@ -9,8 +9,9 @@ from typing import List, Tuple
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.chat.knowledge.utils.hash import get_sha256
-from src.chat.knowledge.embedding_store import EmbeddingManager
-from src.chat.knowledge.kg_manager import KGManager
+lazy from src.chat.knowledge.embedding_store import EmbeddingManager
+lazy from src.chat.knowledge.kg_manager import KGManager
+from src.chat.knowledge.dependencies import require_lpmm_for_cli
 from src.common.logger import get_logger
 
 logger = get_logger("inspect_lpmm_batch")
@@ -68,6 +69,7 @@ def main() -> None:
     )
     parser.add_argument("--openie-file", required=True, help="OpenIE 输出 JSON 文件路径")
     args = parser.parse_args()
+    require_lpmm_for_cli()
 
     openie_path = Path(args.openie_file)
     if not openie_path.exists():

@@ -4,7 +4,7 @@
 
 from src.common.logger import get_logger
 from src.config.config import global_config
-from src.chat.knowledge import get_qa_manager
+from src.chat.knowledge import get_qa_manager, get_lpmm_dependency_error
 from .tool_registry import register_memory_retrieval_tool
 
 logger = get_logger("memory_retrieval_tools")
@@ -36,6 +36,8 @@ async def query_lpmm_knowledge(query: str, limit: int = 5) -> str:
 
         qa_manager = get_qa_manager()
         if qa_manager is None:
+            if dependency_error := get_lpmm_dependency_error():
+                return f"LPMM知识库不可用：{dependency_error}"
             logger.debug("LPMM知识库未初始化，跳过查询")
             return "LPMM知识库未初始化"
 

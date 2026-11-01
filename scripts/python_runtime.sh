@@ -39,7 +39,7 @@ install_maibot_dependencies() {
     require_uv || return 1
     validate_maibot_python "$executable" || return 1
     requirements_file=$(mktemp) || return 1
-    if ! uv export --locked --no-dev --no-emit-project --no-hashes --project "$project" --output-file "$requirements_file" >/dev/null; then
+    if ! uv export --locked --no-dev --extra lpmm --no-emit-project --no-hashes --project "$project" --output-file "$requirements_file" >/dev/null; then
         rm -f -- "$requirements_file"
         return 1
     fi

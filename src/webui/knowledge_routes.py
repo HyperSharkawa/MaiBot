@@ -1,10 +1,11 @@
 """知识库图谱可视化 API 路由"""
 
 from typing import List, Optional
-from fastapi import APIRouter, Query, Depends, Cookie, Header
+from fastapi import APIRouter, Query, Depends, Cookie, Header, HTTPException
 from pydantic import BaseModel
 import logging
 from src.webui.auth import verify_auth_token_from_cookie_or_header
+from src.chat.knowledge.dependencies import LPMMDependencyError, require_lpmm_dependencies
 
 logger = logging.getLogger(__name__)
 
@@ -58,11 +59,15 @@ class KnowledgeStats(BaseModel):
 def _load_kg_manager():
     """延迟加载 KGManager"""
     try:
+        require_lpmm_dependencies()
         from src.chat.knowledge.kg_manager import KGManager
 
         kg_manager = KGManager()
         kg_manager.load_from_file()
         return kg_manager
+    except LPMMDependencyError as error:
+        logger.exception("知识图谱依赖不可用：%s", error.package)
+        raise HTTPException(status_code=503, detail=str(error)) from error
     except Exception as e:
         logger.error(f"加载 KGManager 失败: {e}")
         return None
@@ -203,6 +208,8 @@ async def get_knowledge_graph(
         logger.info(f"返回知识图谱: {len(nodes)} 个节点, {len(edges)} 条边")
         return graph_data
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"获取知识图谱失败: {e}", exc_info=True)
         return KnowledgeGraph(nodes=[], edges=[])
@@ -252,6 +259,8 @@ async def get_knowledge_stats(_auth: bool = Depends(require_auth)):
             avg_connections=round(avg_connections, 2),
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"获取统计信息失败: {e}", exc_info=True)
         return KnowledgeStats(total_nodes=0, total_edges=0, entity_nodes=0, paragraph_nodes=0, avg_connections=0.0)
@@ -293,6 +302,8 @@ async def search_knowledge_node(query: str = Query(..., min_length=1), _auth: bo
         logger.info(f"搜索 '{query}' 找到 {len(results)} 个节点")
         return results[:50]  # 限制返回数量
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"搜索节点失败: {e}", exc_info=True)
         return []

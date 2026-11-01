@@ -1,6 +1,4 @@
-from src.chat.knowledge.embedding_store import EmbeddingManager
-from src.chat.knowledge.qa_manager import QAManager
-from src.chat.knowledge.kg_manager import KGManager
+from src.chat.knowledge.dependencies import LPMMDependencyError, require_lpmm_dependencies
 from src.chat.knowledge.global_logger import logger
 from src.config.config import global_config
 import os
@@ -29,15 +27,36 @@ DATA_PATH = os.path.join(ROOT_PATH, "data")
 
 qa_manager = None
 inspire_manager = None
+_dependency_error: str | None = None
 
 
 def get_qa_manager():
+    """获取已初始化的问答管理器，不触发依赖加载或知识库初始化。"""
     return qa_manager
 
 
+def get_lpmm_dependency_error() -> str | None:
+    """返回本次启动的依赖错误提示，未尝试或已加载成功时返回 None。"""
+    return _dependency_error
+
+
 def lpmm_start_up():  # sourcery skip: extract-duplicate-method
+    """启用时加载知识库；依赖不可用仅停用本次 LPMM，不修改用户配置。"""
+    global qa_manager, _dependency_error
     # 检查LPMM知识库是否启用
     if global_config.lpmm_knowledge.enable:
+        try:
+            require_lpmm_dependencies()
+        except LPMMDependencyError as error:
+            _dependency_error = str(error)
+            qa_manager = None
+            logger.error("LPMM 本次不可用，Bot 将继续启动。%s 原因：%s", error, error.__cause__)
+            return
+        _dependency_error = None
+        from src.chat.knowledge.embedding_store import EmbeddingManager
+        from src.chat.knowledge.kg_manager import KGManager
+        from src.chat.knowledge.qa_manager import QAManager
+
         logger.info("正在初始化Mai-LPMM")
         logger.info("创建LLM客户端")
 
@@ -72,7 +91,6 @@ def lpmm_start_up():  # sourcery skip: extract-duplicate-method
             key = f"paragraph-{pg_hash}"
             if key not in embed_manager.stored_pg_hashes:
                 logger.warning(f"KG中存在Embedding库中不存在的段落：{key}")
-        global qa_manager
         # 问答系统（用于知识库）
         qa_manager = QAManager(
             embed_manager,

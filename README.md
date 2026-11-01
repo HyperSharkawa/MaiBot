@@ -61,6 +61,19 @@ uv sync --locked --no-dev --python 3.15
 uv run --locked --no-dev python bot.py
 ```
 
+默认安装不包含 LPMM 知识库依赖。需要 LPMM 时，使用：
+
+```bash
+uv sync --locked --no-dev --python 3.15.2 --extra lpmm
+uv run --locked --no-dev --extra lpmm python bot.py
+```
+
+并在配置中启用 LPMM。Linux 安装脚本和 Docker 已包含这些依赖。
+
+Windows 可直接运行普通聊天功能；安装当前锁定依赖需要 MSVC C++ 构建工具。
+
+缺少或无法加载 LPMM 依赖时，Bot 会继续运行，知识库功能不可用。
+
 ### 图片与后续消息
 
 群聊和私聊默认等待图片处理完成后，再回答后面的消息。多张图片会并行识别，插件命令可以立即执行。

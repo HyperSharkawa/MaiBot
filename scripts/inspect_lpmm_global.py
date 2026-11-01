@@ -5,15 +5,17 @@ from typing import Set
 # 保证可以导入 src.*
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from src.chat.knowledge.embedding_store import EmbeddingManager
-from src.chat.knowledge.kg_manager import KGManager
+lazy from src.chat.knowledge.embedding_store import EmbeddingManager
+lazy from src.chat.knowledge.kg_manager import KGManager
+from src.chat.knowledge.dependencies import require_lpmm_for_cli
 from src.common.logger import get_logger
 
 logger = get_logger("inspect_lpmm_global")
 
 
 def main() -> None:
-    """检查当前整库（所有批次）的向量与 KG 状态，用于观察删除对剩余数据的影响。"""
+    """检查依赖后读取现有向量和图谱，不修改业务数据。"""
+    require_lpmm_for_cli()
     em = EmbeddingManager()
     kg = KGManager()
 

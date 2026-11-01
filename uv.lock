@@ -538,7 +538,6 @@ dependencies = [
     { name = "aiohttp" },
     { name = "aiohttp-cors" },
     { name = "colorama" },
-    { name = "faiss-cpu" },
     { name = "fastapi" },
     { name = "google-genai" },
     { name = "jieba" },
@@ -548,16 +547,13 @@ dependencies = [
     { name = "msgpack" },
     { name = "numpy" },
     { name = "openai" },
-    { name = "pandas" },
     { name = "peewee" },
     { name = "pillow" },
     { name = "pyahocorasick" },
-    { name = "pyarrow" },
     { name = "pydantic" },
     { name = "pypinyin" },
     { name = "python-dotenv" },
     { name = "python-multipart" },
-    { name = "quick-algo" },
     { name = "rich" },
     { name = "ruff" },
     { name = "setuptools" },
@@ -569,12 +565,20 @@ dependencies = [
     { name = "zstandard" },
 ]
 
+[package.optional-dependencies]
+lpmm = [
+    { name = "faiss-cpu" },
+    { name = "pandas" },
+    { name = "pyarrow" },
+    { name = "quick-algo" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.12.14" },
     { name = "aiohttp-cors", specifier = ">=0.8.1" },
     { name = "colorama", specifier = ">=0.4.6" },
-    { name = "faiss-cpu", specifier = ">=1.11.0" },
+    { name = "faiss-cpu", marker = "extra == 'lpmm'", specifier = ">=1.11.0" },
     { name = "fastapi", specifier = ">=0.116.0" },
     { name = "google-genai", specifier = ">=1.39.1" },
     { name = "jieba", specifier = ">=0.42.1" },
@@ -584,16 +588,16 @@ requires-dist = [
     { name = "msgpack", specifier = ">=1.1.2" },
     { name = "numpy", specifier = ">=2.2.6" },
     { name = "openai", specifier = ">=1.95.0" },
-    { name = "pandas", specifier = ">=2.3.1" },
+    { name = "pandas", marker = "extra == 'lpmm'", specifier = ">=2.3.1" },
     { name = "peewee", specifier = ">=3.18.2" },
     { name = "pillow", specifier = ">=11.3.0" },
     { name = "pyahocorasick", specifier = ">=2.3.1" },
-    { name = "pyarrow", specifier = ">=20.0.0" },
+    { name = "pyarrow", marker = "extra == 'lpmm'", specifier = ">=20.0.0" },
     { name = "pydantic", specifier = ">=2.11.7" },
     { name = "pypinyin", specifier = ">=0.54.0" },
     { name = "python-dotenv", specifier = ">=1.1.1" },
     { name = "python-multipart", specifier = ">=0.0.20" },
-    { name = "quick-algo", specifier = ">=0.1.4" },
+    { name = "quick-algo", marker = "extra == 'lpmm'", specifier = ">=0.1.4" },
     { name = "rich", specifier = ">=14.0.0" },
     { name = "ruff", specifier = ">=0.12.2" },
     { name = "setuptools", specifier = ">=80.9.0" },
@@ -604,6 +608,7 @@ requires-dist = [
     { name = "uvicorn", specifier = ">=0.35.0" },
     { name = "zstandard", specifier = ">=0.25.0" },
 ]
+provides-extras = ["lpmm"]
 
 [[package]]
 name = "maim-message"

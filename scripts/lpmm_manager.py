@@ -25,14 +25,14 @@ from src.common.logger import get_logger  # type: ignore
 from src.config.config import global_config, model_config  # type: ignore
 
 # 引入各功能脚本的入口函数
-from import_openie import main as import_openie_main  # type: ignore
-from info_extraction import main as info_extraction_main  # type: ignore
-from delete_lpmm_items import main as delete_lpmm_items_main  # type: ignore
-from inspect_lpmm_batch import main as inspect_lpmm_batch_main  # type: ignore
-from inspect_lpmm_global import main as inspect_lpmm_global_main  # type: ignore
-from refresh_lpmm_knowledge import main as refresh_lpmm_knowledge_main  # type: ignore
-from test_lpmm_retrieval import main as test_lpmm_retrieval_main  # type: ignore
-from raw_data_preprocessor import load_raw_data  # type: ignore
+lazy from import_openie import main as import_openie_main  # type: ignore
+lazy from info_extraction import main as info_extraction_main  # type: ignore
+lazy from delete_lpmm_items import main as delete_lpmm_items_main  # type: ignore
+lazy from inspect_lpmm_batch import main as inspect_lpmm_batch_main  # type: ignore
+lazy from inspect_lpmm_global import main as inspect_lpmm_global_main  # type: ignore
+lazy from refresh_lpmm_knowledge import main as refresh_lpmm_knowledge_main  # type: ignore
+lazy from test_lpmm_retrieval import main as test_lpmm_retrieval_main  # type: ignore
+lazy from raw_data_preprocessor import load_raw_data  # type: ignore
 
 
 logger = get_logger("lpmm_manager")
@@ -123,6 +123,8 @@ def run_action(action: str, extra_args: Optional[List[str]] = None) -> None:
     这里不重复解析子参数，而是直接调用各脚本的 main()，
     让子脚本保留原有的交互/参数行为。
     """
+    from src.chat.knowledge.dependencies import require_lpmm_for_cli
+
     logger.info("开始执行操作: %s", action)
 
     extra_args = extra_args or []
@@ -161,6 +163,7 @@ def run_action(action: str, extra_args: Optional[List[str]] = None) -> None:
             # 嵌入模型迁移辅助：查看当前嵌入模型/维度并归档 embedding_model_test.json
             _run_embedding_helper()
         elif action == "full_import":
+            require_lpmm_for_cli()
             # 一键流水线：预处理原始语料 -> 信息抽取 -> 导入 -> 刷新
             logger.info("开始 full_import：预处理原始语料 -> 信息抽取 -> 导入 -> 刷新")
             sha_list, raw_data = load_raw_data()
@@ -406,6 +409,9 @@ def _interactive_build_test_args() -> List[str]:
 
 def _run_embedding_helper() -> None:
     """嵌入模型迁移辅助：展示当前配置，并安全归档 embedding_model_test.json。"""
+    from src.chat.knowledge.dependencies import require_lpmm_for_cli
+
+    require_lpmm_for_cli()
     from src.chat.knowledge.embedding_store import EMBEDDING_TEST_FILE  # type: ignore
 
     # 1. 读取当前配置中的嵌入维度与模型信息

@@ -44,7 +44,7 @@ COPY --from=lpmm-builder /MaiMBot-LPMM/lib/quick_algo/dist/*.whl /tmp/lpmm-wheel
 # pyahocorasick 等依赖需要源码构建；完成后移除运行时不需要的编译器。
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git build-essential libgomp1 libstdc++6 \
-    && uv export --locked --no-dev --no-emit-project --no-hashes --output-file /tmp/runtime-requirements.txt \
+    && uv export --locked --no-dev --extra lpmm --no-emit-project --no-hashes --output-file /tmp/runtime-requirements.txt \
     && uv pip install --system -r /tmp/runtime-requirements.txt \
     && uv pip install --system --no-deps --reinstall-package quick-algo /tmp/lpmm-wheels/*.whl \
     && uv pip check --system \

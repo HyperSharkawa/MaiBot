@@ -19,6 +19,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from src.common.logger import get_logger
 from src.config.config import global_config
 from src.chat.knowledge import lpmm_start_up
+from src.chat.knowledge.dependencies import require_lpmm_for_cli
 from src.memory_system.retrieval_tools.query_lpmm_knowledge import query_lpmm_knowledge
 
 logger = get_logger("test_lpmm_retrieval")
@@ -40,6 +41,7 @@ DEFAULT_TEST_CASES: List[Dict[str, Any]] = [
 
 async def run_tests(test_cases: Optional[List[Dict[str, Any]]] = None) -> None:
     """简单测试 LPMM 知识库检索能力"""
+    require_lpmm_for_cli()
     if not global_config.lpmm_knowledge.enable:
         logger.warning("当前配置中 lpmm_knowledge.enable 为 False，检索测试可能直接返回“未启用”。")
 
