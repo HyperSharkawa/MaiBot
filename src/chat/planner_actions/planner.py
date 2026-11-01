@@ -13,6 +13,7 @@ from src.common.logger import get_logger
 from src.chat.logger.plan_reply_logger import PlanReplyLogger
 from src.common.data_models.info_data_model import ActionPlannerInfo
 from src.chat.utils.prompt_builder import Prompt, global_prompt_manager
+from src.chat.utils.planner_prompt import PLANNER_SYSTEM_RULES, PLANNER_USER_CONTEXT, build_reply_action_example
 from src.chat.utils.chat_message_builder import (
     build_readable_messages_with_id,
     get_raw_msg_before_timestamp_with_chat,
@@ -37,53 +38,54 @@ install(extra_lines=3)
 
 
 def init_prompt():
+    """注册分段决策模板：固定要求在前，可变动作说明放在系统段末尾。"""
     Prompt(
-        """
-{time_block}
-{name_block}
-{chat_context_description}，以下是具体的聊天内容
-**聊天内容**
-{chat_content_block}
+        PLANNER_SYSTEM_RULES
+        + """
+【群聊动作选择与输出格式】
+选择符合当前需要且彼此兼容的动作。每个动作最多选择一次。
+no_reply 表示本轮保持沉默，只能单独选择。
+如果某个动作要求独占本轮，不得与其他动作同时选择。
 
-**可选的action**
+所有动作放在同一个 ```json 代码块中，每行一个完整 JSON 对象。
+不要输出 JSON 数组，也不要把同一个对象拆成多行。
+
 reply
-动作描述：
-1.你可以选择呼叫了你的名字，但是你没有做出回应的消息进行回复
-2.你可以自然的顺着正在进行的聊天内容进行回复
-3.一次对一个话题进行回复，免得啰嗦或者回复内容太乱。
-4.不要选择回复你自己发送的消息
-5.不要单独对表情包进行回复
-6.将上下文中所有含义不明的，疑似黑话的，缩写词均写入unknown_words中
-7.如果你对上下文存在疑问，有需要查询的问题，写入question中
-{reply_action_example}
+用途：选择一条消息进行回复，实际回复正文交给回复器生成。
+使用要求：
+- 可以回复呼叫了你的名字、但你尚未回应的消息，也可以自然地接续正在进行的话题。
+- 一次围绕一个话题，避免重复回应已经处理过的内容。
+- 不要回复机器人自己的消息。
+- 不要单独回应表情包。
+
+字段：
+- action：固定为 "reply"。
+- target_message_id：必填，填写实际要回复的消息编号。
+- unknown_words：字符串数组，列出聊天中含义不明的黑话、缩写等词语；没有则填写 []。
+- question：字符串，填写理解上下文所需查询的具体问题；没有则填写 ""。这里不填写准备发送给聊天参与者的回复正文。
+{reply_optional_fields}
+
+输出示例，示例编号必须替换为本轮实际目标：
+{reply_output_example}
 
 no_reply
-动作描述：
-保持沉默，不回复直到有新消息
-控制聊天频率，不要太过频繁的发言
-{{"action":"no_reply"}}
+用途：保持沉默，等待新消息，避免不必要或过于频繁的发言。
+不需要 target_message_id，也不附带回复参数。
 
-{action_options_text}
-
-**你之前的action执行和思考记录**
-{actions_before_now_block}
-
-请选择**可选的**且符合使用条件的action，并说明触发action的消息id(消息id格式:m+数字)
-先输出你的简短的选择思考理由，再输出你选择的action，理由不要分点，精简。
-**动作选择要求**
-请你根据聊天内容,用户的最新消息和以下标准选择合适的动作:
-{plan_style}
-{moderation_prompt}
-
-target_message_id为必填，表示触发消息的id
-请选择所有符合使用要求的action，每个动作最多选择一次，但是可以选择多个动作；
-动作用json格式输出，用```json包裹，如果输出多个json，每个json都要单独一行放在同一个```json代码块内:
-**示例**
-// 理由文本（简短）
+输出示例：
+暂时没有需要我回应的内容。
 ```json
-{{"action":"动作名", "target_message_id":"m123", .....}}
-{{"action":"动作名", "target_message_id":"m456", .....}}
-```""",
+{{"action":"no_reply"}}
+```
+
+【其他可用动作】
+{action_options_text}
+""",
+        "planner_prompt_system",
+    )
+
+    Prompt(
+        PLANNER_USER_CONTEXT,
         "planner_prompt",
     )
 
@@ -93,7 +95,10 @@ target_message_id为必填，表示触发消息的id
 动作描述：{action_description}
 使用条件{parallel_text}：
 {action_require}
-{{"action":"{action_name}",{action_parameters}, "target_message_id":"消息id(m+数字)"}}
+字段：
+- action：固定为 "{action_name}"。
+- target_message_id：填写触发该动作的实际消息编号。
+{action_parameters}
 """,
         "action_prompt",
     )
@@ -378,6 +383,7 @@ class ActionPlanner:
             message_id_list=message_id_list,
         )
         prompt_build_ms = (time.perf_counter() - prompt_build_start) * 1000
+        prompt_text = prompt if isinstance(prompt, str) else f"System Prompt:\n{prompt[0]}\n\nUser Prompt:\n{prompt[1]}"
 
         # 调用LLM获取决策
         reasoning, actions, llm_raw_output, llm_reasoning, llm_duration_ms = await self._execute_main_planner(
@@ -426,7 +432,7 @@ class ActionPlanner:
         try:
             PlanReplyLogger.log_plan(
                 chat_id=self.chat_id,
-                prompt=prompt,
+                prompt=prompt_text,
                 reasoning=reasoning,
                 raw_output=llm_raw_output,
                 raw_reasoning=llm_reasoning,
@@ -504,8 +510,8 @@ class ActionPlanner:
         message_id_list: List[Tuple[str, "DatabaseMessages"]],
         chat_content_block: str = "",
         interest: str = "",
-    ) -> tuple[str, List[Tuple[str, "DatabaseMessages"]]]:
-        """构建 Planner LLM 的提示词 (获取模板并填充数据)"""
+    ) -> tuple[str | tuple[str, str], List[Tuple[str, "DatabaseMessages"]]]:
+        """构建系统与用户提示词及消息编号表；构建失败沿用原错误字符串。"""
         try:
             actions_before_now_block = self.get_plan_log_str()
 
@@ -524,51 +530,30 @@ class ActionPlanner:
             )
             name_block = f"你的名字是{bot_name}{bot_nickname}，请注意哪些是你自己的发言。"
 
-            # 根据 think_mode 配置决定 reply action 的示例 JSON
-            # 在 JSON 中直接作为 action 参数携带 unknown_words 和 question
-            if global_config.chat.think_mode == "classic":
-                reply_action_example = ""
-                if global_config.chat.llm_quote:
-                    reply_action_example += "5.如果要明确回复消息，使用quote，如果消息不多不需要明确回复，设置quote为false\n"
-                reply_action_example += (
-                    '{{"action":"reply", "target_message_id":"消息id(m+数字)", '
-                    '"unknown_words":["词语1","词语2"], '
-                    '"question":"需要查询的问题"'
-                )
-                if global_config.chat.llm_quote:
-                    reply_action_example += ', "quote":"如果需要引用该message，设置为true"'
-                reply_action_example += "}"
-            else:
-                reply_action_example = (
-                    "5.think_level表示思考深度，0表示该回复不需要思考和回忆，1表示该回复需要进行回忆和思考\n"
-                )
-                if global_config.chat.llm_quote:
-                    reply_action_example += "6.如果要明确回复消息，使用quote，如果消息不多不需要明确回复，设置quote为false\n"
-                reply_action_example += (
-                    '{{"action":"reply", "think_level":数值等级(0或1), '
-                    '"target_message_id":"消息id(m+数字)", '
-                    '"unknown_words":["词语1","词语2"], '
-                    '"question":"需要查询的问题"'
-                )
-                if global_config.chat.llm_quote:
-                    reply_action_example += ', "quote":"如果需要引用该message，设置为true"'
-                reply_action_example += "}"
+            reply_optional_fields, reply_output_example = build_reply_action_example(
+                global_config.chat.think_mode, global_config.chat.llm_quote
+            )
 
-            planner_prompt_template = await global_prompt_manager.get_prompt_async("planner_prompt")
-            prompt = planner_prompt_template.format(
-                time_block=time_block,
-                chat_context_description=chat_context_description,
-                chat_content_block=chat_content_block,
-                actions_before_now_block=actions_before_now_block,
+            system_template = await global_prompt_manager.get_prompt_async("planner_prompt_system")
+            system_prompt = system_template.format(
                 action_options_text=action_options_block,
                 moderation_prompt=moderation_prompt_block,
                 name_block=name_block,
-                interest=interest,
                 plan_style=global_config.personality.plan_style,
-                reply_action_example=reply_action_example,
+                reply_optional_fields=reply_optional_fields,
+                reply_output_example=reply_output_example,
+            )
+            user_template = await global_prompt_manager.get_prompt_async("planner_prompt")
+            user_prompt = user_template.format(
+                time_block=time_block,
+                chat_context_description=chat_context_description,
+                chat_content_block=chat_content_block,
+                message_ids_block=", ".join(message_id for message_id, _ in message_id_list),
+                actions_before_now_block=actions_before_now_block,
+                interest=interest,
             )
 
-            return prompt, message_id_list
+            return (system_prompt, user_prompt), message_id_list
         except Exception as e:
             logger.error(f"构建 Planner 提示词时出错: {e}")
             logger.error(traceback.format_exc())
@@ -624,18 +609,17 @@ class ActionPlanner:
         return filtered_actions
 
     async def _build_action_options_block(self, current_available_actions: Dict[str, ActionInfo]) -> str:
-        """构建动作选项块"""
+        """按动作名称稳定渲染已过滤的选项，不改变激活判断的顺序。"""
         if not current_available_actions:
             return ""
 
         action_options_block = ""
-        for action_name, action_info in current_available_actions.items():
+        for action_name, action_info in sorted(current_available_actions.items()):
             # 构建参数文本
             param_text = ""
             if action_info.action_parameters:
-                param_text = "\n"
                 for param_name, param_description in action_info.action_parameters.items():
-                    param_text += f'    "{param_name}":"{param_description}"\n'
+                    param_text += f"- {param_name}：{param_description}\n"
                 param_text = param_text.rstrip("\n")
 
             # 构建要求文本
@@ -665,7 +649,7 @@ class ActionPlanner:
 
     async def _execute_main_planner(
         self,
-        prompt: str,
+        prompt: str | tuple[str, str],
         message_id_list: List[Tuple[str, "DatabaseMessages"]],
         filtered_actions: Dict[str, ActionInfo],
         available_actions: Dict[str, ActionInfo],
@@ -676,6 +660,7 @@ class ActionPlanner:
         actions: List[ActionPlannerInfo] = []
         llm_reasoning = None
         llm_duration_ms = None
+        prompt_text = prompt if isinstance(prompt, str) else f"System Prompt:\n{prompt[0]}\n\nUser Prompt:\n{prompt[1]}"
 
         try:
             # 调用LLM
@@ -685,12 +670,12 @@ class ActionPlanner:
             llm_reasoning = reasoning_content
 
             if global_config.debug.show_planner_prompt:
-                logger.info(f"{self.log_prefix}规划器原始提示词: {prompt}")
+                logger.info(f"{self.log_prefix}规划器原始提示词: {prompt_text}")
                 logger.info(f"{self.log_prefix}规划器原始响应: {llm_content}")
                 if reasoning_content:
                     logger.info(f"{self.log_prefix}规划器推理: {reasoning_content}")
             else:
-                logger.debug(f"{self.log_prefix}规划器原始提示词: {prompt}")
+                logger.debug(f"{self.log_prefix}规划器原始提示词: {prompt_text}")
                 logger.debug(f"{self.log_prefix}规划器原始响应: {llm_content}")
                 if reasoning_content:
                     logger.debug(f"{self.log_prefix}规划器推理: {reasoning_content}")

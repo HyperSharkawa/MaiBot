@@ -353,8 +353,12 @@ class HeartFChatting:
                 chat_content_block=chat_content_block,
                 message_id_list=message_id_list,
             )
+            prompt = prompt_info[0]
+            prompt_text = (
+                prompt if isinstance(prompt, str) else f"System Prompt:\n{prompt[0]}\n\nUser Prompt:\n{prompt[1]}"
+            )
             continue_flag, modified_message = await events_manager.handle_mai_events(
-                EventType.ON_PLAN, round_context.event_message, prompt_info[0], None, self.chat_stream.stream_id
+                EventType.ON_PLAN, round_context.event_message, prompt_text, None, self.chat_stream.stream_id
             )
             if not continue_flag:
                 return False

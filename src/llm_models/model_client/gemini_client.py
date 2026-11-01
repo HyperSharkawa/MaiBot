@@ -576,7 +576,7 @@ class GeminiClient(BaseClient):
             generation_config_dict["tools"] = Tool(function_declarations=tools)
         if messages[1]:
             # 如果有system消息，则将其添加到配置中
-            generation_config_dict["system_instructions"] = messages[1]
+            generation_config_dict["system_instruction"] = messages[1]
         if response_format and response_format.format_type == RespFormatType.TEXT:
             generation_config_dict["response_mime_type"] = "text/plain"
         elif response_format and response_format.format_type in (RespFormatType.JSON_OBJ, RespFormatType.JSON_SCHEMA):
