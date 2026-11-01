@@ -1,29 +1,16 @@
 """独立的 WebUI 服务器 - 运行在 0.0.0.0:8001"""
 
 import asyncio
-import mimetypes
 from pathlib import Path
 import socket
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
 from uvicorn import Config, Server as UvicornServer
 from src.common.logger import get_logger
+from src.webui.frontend_assets import FrontendAssets
+from src.webui.frontend_routes import register_frontend_routes
 
 logger = get_logger("webui_server")
-
-
-def _resolve_safe_static_file_path(static_path: Path, full_path: str) -> Path | None:
-    static_root = static_path.resolve()
-
-    try:
-        candidate_path = (static_root / full_path).resolve()
-        candidate_path.relative_to(static_root)
-    except (OSError, RuntimeError, ValueError):
-        logger.warning(f"🚫 检测到疑似路径穿越请求: {full_path}")
-        return None
-
-    return candidate_path
 
 
 class WebUIServer:
@@ -34,6 +21,7 @@ class WebUIServer:
         self.port = port
         self.app = FastAPI(title="MaiBot WebUI")
         self._server = None
+        self.frontend = FrontendAssets(Path(__file__).resolve().parents[2], logger=logger)
 
         # 配置防爬虫中间件（需要在CORS之前注册）
         self._setup_anti_crawler()
@@ -46,10 +34,9 @@ class WebUIServer:
 
         # 重要：先注册 API 路由，再设置静态文件
         self._register_api_routes()
-        self._setup_static_files()
-
         # 注册robots.txt路由
         self._setup_robots_txt()
+        self._setup_static_files()
 
     def _setup_cors(self):
         """配置 CORS 中间件"""
@@ -90,57 +77,10 @@ class WebUIServer:
             logger.error(f"❌ 获取 Access Token 失败: {e}")
 
     def _setup_static_files(self):
-        """设置静态文件服务"""
-        # 确保正确的 MIME 类型映射
-        mimetypes.init()
-        mimetypes.add_type("application/javascript", ".js")
-        mimetypes.add_type("application/javascript", ".mjs")
-        mimetypes.add_type("text/css", ".css")
-        mimetypes.add_type("application/json", ".json")
+        """注册独立恢复入口和可切换静态资源；构造服务器时不开始下载。"""
+        from src.webui.auth import get_current_token
 
-        base_dir = Path(__file__).parent.parent.parent
-        static_path = base_dir / "webui" / "dist"
-
-        if not static_path.exists():
-            logger.warning(f"❌ WebUI 静态文件目录不存在: {static_path}")
-            logger.warning("💡 请先构建前端: cd webui && npm run build")
-            return
-
-        if not (static_path / "index.html").exists():
-            logger.warning(f"❌ 未找到 index.html: {static_path / 'index.html'}")
-            logger.warning("💡 请确认前端已正确构建")
-            return
-
-        # 处理 SPA 路由 - 注意：这个路由优先级最低
-        @self.app.get("/{full_path:path}", include_in_schema=False)
-        async def serve_spa(full_path: str):
-            """服务单页应用 - 只处理非 API 请求"""
-            # 如果是根路径，直接返回 index.html
-            if not full_path or full_path == "/":
-                response = FileResponse(static_path / "index.html", media_type="text/html")
-                response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
-                return response
-
-            # 检查是否是静态文件
-            file_path = _resolve_safe_static_file_path(static_path, full_path)
-            if file_path is None:
-                raise HTTPException(status_code=404, detail="Not Found")
-
-            if file_path.exists() and file_path.is_file():
-                # 自动检测 MIME 类型
-                media_type = mimetypes.guess_type(str(file_path))[0]
-                response = FileResponse(file_path, media_type=media_type)
-                # HTML 文件添加防索引头
-                if str(file_path).endswith(".html"):
-                    response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
-                return response
-
-            # 其他路径返回 index.html（SPA 路由）
-            response = FileResponse(static_path / "index.html", media_type="text/html")
-            response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
-            return response
-
-        logger.info(f"✅ WebUI 静态文件服务已配置: {static_path}")
+        register_frontend_routes(self.app, self.frontend, get_current_token)
 
     def _setup_anti_crawler(self):
         """配置防爬虫中间件"""
@@ -243,6 +183,7 @@ class WebUIServer:
                 logger.info(f"💡 本机访问: http://localhost:{self.port} 或 http://127.0.0.1:{self.port}")
 
         try:
+            self.frontend.retry()
             await self._server.serve()
         except OSError as e:
             # 处理端口绑定相关的错误
@@ -256,6 +197,8 @@ class WebUIServer:
         except Exception as e:
             logger.error(f"❌ WebUI 服务器运行错误: {e}", exc_info=True)
             raise
+        finally:
+            await self.frontend.close()
 
     def _check_port_available(self) -> bool:
         """检查端口是否可用（支持 IPv4 和 IPv6）"""
@@ -282,6 +225,7 @@ class WebUIServer:
 
     async def shutdown(self):
         """关闭服务器"""
+        await self.frontend.close()
         if self._server:
             logger.info("正在关闭 WebUI 服务器...")
             self._server.should_exit = True

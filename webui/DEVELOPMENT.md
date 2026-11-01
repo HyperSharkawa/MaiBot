@@ -28,6 +28,8 @@ bun run dev
 
 构建作业只读，发布作业使用 `GITHUB_TOKEN` 的 `contents: write` 权限。管理员需允许此仓库运行 Actions 和发布 Releases；不需要填写 PAT。已有完整资源经校验后复用，同名冲突或不完整草稿会报错，需要人工检查，不自动覆盖。资源发行版不设置为应用的 Latest Release。
 
+运行时缓存位于 `data/webui/`，仅在启动时尝试一次，或由已认证用户手动重试。保留当前和上一版资源，不周期重试，也不向“最新版本”回退。可通过标准 `HTTPS_PROXY` / `HTTP_PROXY` 环境变量配置网络代理。
+
 ## 本地验证
 
 纯资源与恢复接口测试使用临时目录，不读取业务配置：
@@ -35,6 +37,26 @@ bun run dev
 ```bash
 uv run --no-project --python 3.15.2 --with aiohttp==3.14.5 --with fastapi==0.135.3 --with httpx==0.28.1 python -m unittest discover -s tests -p 'test_frontend*.py'
 ```
+
+后端集成测试使用不含 `dist`、配置、数据和托管缓存的独立源码副本。在副本根目录创建 `.webui-test-fixture` 标记，显式指定资源场景：
+
+```bash
+python tests/webui_host_harness.py --prepare --resource-mode bundled --package /path/to/webui.zip
+```
+
+`--resource-mode` 支持 `missing`（默认，无资源）、`bundled`（自带资源）、`legacy`（无清单旧页面）和 `cache`（托管缓存）。后三种场景需要与当前源码匹配、已校验的资源包。夹具从模板生成测试配置，监听回环端口 18731，禁止外联，不启动聊天；不要在日常使用的实例目录执行。准备好匹配资源后，副本内可执行 `python -m unittest discover -s tests -p 'test_webui_host_integration.py'` 检查认证和选模。
+
+浏览器测试脚本为 `tests/webui_browser.cjs`，使用独立安装的 Playwright 1.62.1。将 `PLAYWRIGHT_MODULE` 指向 Playwright 模块，`WEBUI_TEST_URL` 指向本地测试服务，`WEBUI_TEST_OUTPUT` 设为截图输出目录，然后运行 `node tests/webui_browser.cjs`。测试会修改测试配置。默认使用本机 Edge，可通过 `PLAYWRIGHT_CHANNEL` 指定 Chromium 通道。
+
+运行 `node tests/webui_recovery_cases.cjs` 可单独检查恢复控件的就绪竞态、按钮状态及页面离开/返回。完整失败恢复使用另一个干净副本运行 `python tests/webui_recovery_harness.py --package /path/to/webui.zip --resource-mode missing`，再将浏览器脚本的 `WEBUI_RECOVERY_TEST_URL` 指向其回环端口 18732。测试旧页面时，两端分别设置 `--resource-mode legacy` 和 `WEBUI_RECOVERY_RESOURCE_MODE=legacy`。
+
+Git 更新测试在临时远端与用户副本中进行，不修改当前仓库历史。指定仍含受跟踪产物的历史提交和当前候选匹配的资源包：
+
+```bash
+python tests/webui_upgrade_harness.py --before-ref <历史提交> --package /path/to/webui.zip
+```
+
+此测试检查实际快进更新、产物删除、本地修改冲突、配置与数据库保留、新 clone 和无 Git 源码运行。下载边界使用指定的已校验包；公开 Release 的实际可下载性应单独检查。
 
 ## 构建 Docker 镜像
 
