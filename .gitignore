@@ -330,4 +330,7 @@ config.toml
 interested_rates.txt
 MaiBot.code-workspace
 *.lock
+!webui/bun.lock
+!webui/src/lib/
+!webui/src/lib/**
 actionlint

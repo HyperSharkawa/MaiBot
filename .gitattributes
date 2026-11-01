@@ -1,3 +1,8 @@
 *.bat text eol=crlf
 *.cmd text eol=crlf
 webui/dist/** binary
+webui/src/** text=auto eol=lf
+webui/*.json text eol=lf
+webui/*.ts text eol=lf
+webui/*.js text eol=lf
+webui/bun.lock text eol=lf

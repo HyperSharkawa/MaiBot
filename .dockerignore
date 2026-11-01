@@ -6,5 +6,26 @@ __pycache__
 mongodb
 napcat
 docs/
-.github/
+.github/*
+!.github/workflows/
+.github/workflows/*
+!.github/workflows/webui.yml
 # test
+.context/
+AGENTS.md
+.env
+.venv/
+config/
+data/
+logs/
+webui/node_modules/
+webui/dist/
+webui/.build/
+**/__pycache__/
+**/*.tsbuildinfo
+.idea/
+.vscode/
+.ruff_cache/
+*.confirmed
+.webui-test-fixture
+webui/fixture-original-dist/

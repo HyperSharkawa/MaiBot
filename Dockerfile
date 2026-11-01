@@ -1,3 +1,16 @@
+# 前端使用同一锁定工具链，最终运行镜像不包含 Node、Bun 或 node_modules。
+FROM node:24.22.1-bookworm-slim AS webui-builder
+COPY --from=oven/bun:1.4.4 /usr/local/bin/bun /usr/local/bin/bun
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+WORKDIR /build
+COPY webui ./webui
+COPY scripts/build_webui.py ./scripts/build_webui.py
+COPY src/__init__.py ./src/__init__.py
+COPY src/webui/__init__.py src/webui/frontend_contract.py ./src/webui/
+COPY .github/workflows/webui.yml ./.github/workflows/webui.yml
+ARG WEBUI_SOURCE_COMMIT
+RUN uv run --no-project --python 3.15.2 python scripts/build_webui.py build --source-commit "$WEBUI_SOURCE_COMMIT"
+
 # 编译 LPMM
 FROM python:3.15.2-slim AS lpmm-builder
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
@@ -40,6 +53,7 @@ RUN apt-get update \
 
 # 复制项目代码
 COPY . .
+COPY --from=webui-builder /build/webui/.build/dist ./webui/dist
 
 EXPOSE 8000
 

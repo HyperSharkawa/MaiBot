@@ -1,0 +1,69 @@
+name: 构建 WebUI
+
+on:
+  pull_request:
+    paths: ['webui/**', 'src/webui/frontend_contract.py', 'scripts/build_webui.py', 'scripts/publish_webui.py', 'tests/test_frontend*.py', '.github/workflows/webui.yml']
+  push:
+    branches: [main]
+    paths: ['webui/**', 'src/webui/frontend_contract.py', 'scripts/build_webui.py', 'scripts/publish_webui.py', 'tests/test_frontend*.py', '.github/workflows/webui.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: webui-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      build_id: ${{ steps.identity.outputs.build_id }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.22.1'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.4'
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: '3.15.2'
+      - name: 校验资源契约与恢复流程
+        run: uv run --no-project --python 3.15.2 --with aiohttp==3.14.5 --with fastapi==0.135.3 --with httpx==0.28.1 python -m unittest discover -s tests -p 'test_frontend*.py'
+      - name: 冻结安装、类型检查、构建和打包
+        run: uv run --no-project --python 3.15.2 python scripts/build_webui.py build --source-commit "$GITHUB_SHA"
+      - name: 记录构建标识
+        id: identity
+        run: uv run --no-project --python 3.15.2 python scripts/publish_webui.py identity
+      - uses: actions/upload-artifact@v4
+        with:
+          name: webui-${{ steps.identity.outputs.build_id }}
+          path: |
+            webui/.build/webui.zip
+            webui/.build/webui.zip.sha256
+          if-no-files-found: error
+          # 输出目录以点开头；明确允许仅上面列出的两个发行文件。
+          include-hidden-files: true
+
+  publish:
+    needs: build
+    if: github.repository == 'HyperSharkawa/MaiBot' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: '3.15.2'
+      - uses: actions/download-artifact@v4
+        with:
+          name: webui-${{ needs.build.outputs.build_id }}
+          path: webui/.build
+      - name: 校验并发布不可变资源
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uv run --no-project --python 3.15.2 python scripts/publish_webui.py publish
