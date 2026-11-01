@@ -146,13 +146,15 @@ async function recovery() {
     } else {
       await page.getByRole('heading', { name: '管理页面尚未准备好' }).waitFor()
     }
-    await page.getByRole('button', { name: '重试下载', exact: true }).click()
+    await page.getByRole('button', { name: '登录后选择下载源', exact: true }).click()
     await page.getByLabel('WebUI Token').fill('wrong-synthetic-token')
-    await page.getByRole('button', { name: '登录并重试' }).click()
+    await page.getByRole('button', { name: '登录', exact: true }).click()
     await page.getByRole('alert').filter({ hasText: 'Token 无效' }).waitFor()
     await page.getByLabel('WebUI Token').fill('webui-synthetic-test-token')
     await page.screenshot({ path: path.join(output, legacy ? 'recovery-legacy-login-mobile.png' : 'recovery-login-mobile.png') })
-    await page.getByRole('button', { name: '登录并重试' }).click()
+    await page.getByRole('button', { name: '登录', exact: true }).click()
+    await page.getByRole('combobox', { name: '下载源', exact: true }).selectOption('hongkong')
+    await page.getByRole('button', { name: '重试下载', exact: true }).click()
     await page.getByRole('button', { name: '刷新页面', exact: true }).waitFor()
     if (legacy) {
       assert.equal(await page.locator('script[data-page-version]').getAttribute('data-page-version'), 'legacy')

@@ -6,12 +6,20 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from pydantic import BaseModel, ConfigDict
 
-from .frontend_assets import FrontendAssets
+from .frontend_assets import DownloadBusyError, FrontendAssets
 
 HOST_FILES = Path(__file__).parent / "frontend_host"
 NO_CACHE = {"Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow, noarchive"}
 RECOVERY_SCRIPT = '<script src="/api/webui/frontend/recovery.js" data-page-version="{version}" defer></script>'
+
+
+class RetryRequest(BaseModel):
+    """只接受服务器提供的源标识，旧客户端不传请求体时仍自动选择。"""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    source_id: str = "auto"
 
 
 def register_frontend_routes(app: FastAPI, assets: FrontendAssets, verify_auth) -> None:
@@ -25,10 +33,23 @@ def register_frontend_routes(app: FastAPI, assets: FrontendAssets, verify_auth) 
         return JSONResponse(assets.status(), headers=NO_CACHE)
 
     @app.post("/api/webui/frontend/retry", dependencies=[Depends(verify_auth)], status_code=202)
-    async def retry():
+    async def retry(request: RetryRequest | None = None):
         """已认证用户可重试固定版本，无 URL、路径或版本输入。"""
-        assets.retry()
+        try:
+            await assets.request_retry(request.source_id if request else "auto")
+        except DownloadBusyError as error:
+            raise HTTPException(409, str(error)) from error
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
         return JSONResponse(assets.status(), status_code=202, headers=NO_CACHE)
+
+    @app.get("/api/webui/frontend/sources", dependencies=[Depends(verify_auth)])
+    async def sources():
+        """只读返回可选源及自动顺序，不泄露保存的地址或配置内容。"""
+        available = await assets.sources()
+        return JSONResponse(
+            {"sources": [{"id": source.id, "name": source.name} for source in available]}, headers=NO_CACHE
+        )
 
     @app.get("/api/webui/frontend/recovery.js", include_in_schema=False)
     async def recovery_script():

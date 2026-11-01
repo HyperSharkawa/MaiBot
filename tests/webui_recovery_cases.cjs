@@ -19,16 +19,33 @@ async function runCase(browser, name, html, scenario) {
   let state = 'ready'
   let statusRequests = 0
   let retries = 0
+  let transfer = null
+  let authenticated = true
+  let selection = null
   const server = http.createServer((request, response) => {
     if (request.url === '/api/webui/frontend/recovery.js') {
       response.writeHead(200, { 'Content-Type': 'application/javascript' }).end(script)
     } else if (request.url === '/api/webui/frontend/status') {
       statusRequests++
-      response.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(status(state)))
+      response.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ...status(state), download: transfer }))
+    } else if (request.url === '/api/webui/frontend/sources') {
+      response.writeHead(authenticated ? 200 : 401, { 'Content-Type': 'application/json' }).end(JSON.stringify({ sources: [{ id: 'github', name: 'GitHub' }, { id: 'hongkong', name: '香港加速' }] }))
+    } else if (request.url === '/api/webui/auth/verify') {
+      let body = ''
+      request.on('data', chunk => { body += chunk })
+      request.on('end', () => {
+        authenticated = JSON.parse(body).token === 'synthetic'
+        response.writeHead(authenticated ? 200 : 401, { 'Content-Type': 'application/json' }).end(JSON.stringify({ valid: authenticated, message: authenticated ? '成功' : 'Token 无效' }))
+      })
     } else if (request.url === '/api/webui/frontend/retry') {
-      retries++
-      state = 'downloading'
-      response.writeHead(202, { 'Content-Type': 'application/json' }).end(JSON.stringify(status(state)))
+      let body = ''
+      request.on('data', chunk => { body += chunk })
+      request.on('end', () => {
+        retries++
+        selection = body ? JSON.parse(body).source_id : 'auto'
+        state = 'downloading'
+        response.writeHead(202, { 'Content-Type': 'application/json' }).end(JSON.stringify(status(state)))
+      })
     } else if (request.url === '/') {
       response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }).end(html)
     } else {
@@ -42,6 +59,8 @@ async function runCase(browser, name, html, scenario) {
     await scenario({
       page, base: `http://127.0.0.1:${server.address().port}`,
       setState: value => { state = value }, counts: () => ({ statusRequests, retries }),
+      setDownload: value => { transfer = value }, setAuthenticated: value => { authenticated = value },
+      selected: () => selection,
     })
     console.log(`PASS ${name}`)
   } finally {
@@ -99,6 +118,67 @@ async function main() {
       await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })))
       await page.getByRole('button', { name: '刷新页面', exact: true }).waitFor()
       assert.equal(counts().statusRequests, before + 1)
+    })
+    for (const [name, html] of [['说明页下载进度', missing], ['旧页面下载进度', pageMarkup(previous)]]) {
+      await runCase(browser, name, html, async ({ page, base, setState, setDownload }) => {
+        setState('downloading')
+        const download = { phase: 'archive', source_name: '香港加速', source_index: 2, source_count: 4, received_bytes: 1200000, total_bytes: 2400000, bytes_per_second: 28000, low_speed_seconds: 0, automatic: true }
+        setDownload(download)
+        await page.goto(base)
+        await page.getByText('当前下载源：香港加速 · 第 2/4 个', { exact: true }).waitFor()
+        assert.equal(await page.getByRole('progressbar').getAttribute('value'), '50')
+        assert.match(await page.locator('maibot-frontend-status .bytes').innerText(), /28.0 KB\/s/)
+        if (process.env.WEBUI_TEST_OUTPUT) {
+          await fs.mkdir(process.env.WEBUI_TEST_OUTPUT, { recursive: true })
+          await page.screenshot({ path: path.join(process.env.WEBUI_TEST_OUTPUT, `${name}-mobile.png`) })
+          await page.setViewportSize({ width: 1440, height: 900 })
+          await page.screenshot({ path: path.join(process.env.WEBUI_TEST_OUTPUT, `${name}-desktop.png`) })
+        }
+        setDownload({ ...download, total_bytes: null, bytes_per_second: 1000, low_speed_seconds: 30 })
+        await page.getByText('下载较慢，持续低于 5 KB/s 达 60 秒后将切换下载源。', { exact: true }).waitFor()
+        assert.equal(await page.getByRole('progressbar').getAttribute('value'), null)
+        setDownload({ ...download, source_index: 3, source_name: '加速源名称很长时也应当能够正常换行显示', received_bytes: 0, phase: 'checksum' })
+        await page.getByText('正在获取校验文件…', { exact: true }).waitFor()
+        setDownload({ ...download, phase: 'validating', received_bytes: 2400000 })
+        setState('installing')
+        await page.getByText('正在校验并安装页面…', { exact: true }).waitFor()
+        assert.equal(await page.getByRole('button', { name: '刷新页面', exact: true }).isHidden(), true)
+        setState('ready')
+        await page.getByRole('button', { name: '刷新页面', exact: true }).waitFor()
+        assert.equal(page.url(), `${base}/`)
+      })
+    }
+    await runCase(browser, '登录后选源不自动下载', missing, async ({ page, base, setState, setAuthenticated, selected, counts }) => {
+      setState('missing')
+      setAuthenticated(false)
+      await page.goto(base)
+      await page.getByRole('button', { name: '登录后选择下载源', exact: true }).click()
+      await page.getByLabel('WebUI Token').fill('wrong')
+      await page.getByRole('button', { name: '登录', exact: true }).click()
+      await page.getByRole('alert').filter({ hasText: 'Token 无效' }).waitFor()
+      await page.getByLabel('WebUI Token').fill('synthetic')
+      await page.getByRole('button', { name: '登录', exact: true }).click()
+      const selector = page.getByRole('combobox', { name: '下载源', exact: true })
+      await selector.waitFor()
+      assert.equal(counts().retries, 0)
+      await selector.selectOption('hongkong')
+      assert.equal(counts().retries, 0)
+      await page.getByRole('button', { name: '重试下载', exact: true }).click()
+      await page.waitForFunction(() => document.querySelector('maibot-frontend-status').shadowRoot.querySelector('select').disabled)
+      assert.equal(selected(), 'hongkong')
+      assert.equal(counts().retries, 1)
+    })
+    await runCase(browser, '复用旧页面随后建立的登录状态', pageMarkup(previous), async ({ page, base, setState, setAuthenticated, counts }) => {
+      setState('stale')
+      setAuthenticated(false)
+      await page.goto(base)
+      const login = page.getByRole('button', { name: '登录后选择下载源', exact: true })
+      await login.waitFor()
+      setAuthenticated(true)
+      await login.click()
+      await page.getByRole('combobox', { name: '下载源', exact: true }).waitFor()
+      assert.equal(await page.getByLabel('WebUI Token').isHidden(), true)
+      assert.equal(counts().retries, 0)
     })
   } finally {
     await browser.close()

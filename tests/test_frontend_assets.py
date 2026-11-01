@@ -79,8 +79,8 @@ class AssetsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.assets.state, "ready")
         self.assertEqual(self.assets.previous, legacy)
 
-    async def test_missing_and_corrupt_package_do_not_retry(self):
-        """损坏 ZIP 转为可恢复错误，不留下任务异常或假就绪状态。"""
+    async def test_corrupt_package_exhausts_sources_without_another_round(self):
+        """各源损坏 ZIP 只尝试一次，不留下任务异常或自动开始第二轮。"""
 
         async def corrupt(destination):
             """提供损坏的下载内容。"""
@@ -91,7 +91,7 @@ class AssetsTests(unittest.IsolatedAsyncioTestCase):
             await self.assets.retry()
             await asyncio.sleep(0)
             self.assertEqual(self.assets.status()["state"], "missing")
-        self.assertEqual(self.downloads, 1)
+        self.assertEqual(self.downloads, 4)
         self.assertFalse((self.assets.cache / "current.json").exists())
 
     async def test_non_object_cache_pointer_and_manifest_are_recoverable(self):

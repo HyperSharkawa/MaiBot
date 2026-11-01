@@ -55,13 +55,25 @@ class HostIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.addAsyncCleanup(server.frontend.close)
         async with httpx.AsyncClient(transport=httpx.ASGITransport(server.app), base_url="http://127.0.0.1") as client:
             self.assertEqual((await client.post("/api/webui/frontend/retry")).status_code, 401)
+            self.assertEqual((await client.get("/api/webui/frontend/sources")).status_code, 401)
             response = await client.post("/api/webui/auth/verify", json={"token": "webui-synthetic-test-token"})
             self.assertTrue(response.json()["valid"])
             self.assertIn("HttpOnly", response.headers["set-cookie"])
+            sources = await client.get("/api/webui/frontend/sources")
+            self.assertEqual(sources.status_code, 200)
+            self.assertEqual(sources.json()["sources"][0]["id"], "github")
             self.assertEqual((await client.post("/api/webui/frontend/retry")).status_code, 202)
             await server.frontend._task
             self.assertEqual(server.frontend.state, "ready")
             client.cookies.clear()
+            self.assertEqual(
+                (
+                    await client.get(
+                        "/api/webui/frontend/sources", headers={"Authorization": "Bearer webui-synthetic-test-token"}
+                    )
+                ).status_code,
+                200,
+            )
             self.assertEqual(
                 (
                     await client.post(

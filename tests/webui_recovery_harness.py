@@ -25,10 +25,10 @@ async def main():
     attempts = 0
 
     async def download(destination):
-        """第一次返回网络失败，用户手动重试才交付完整 ZIP。"""
+        """自动首轮所有源均失败，用户选择单源重试后交付完整 ZIP。"""
         nonlocal attempts
         attempts += 1
-        if attempts == 1:
+        if server.frontend.download["automatic"]:
             raise TimeoutError("synthetic first download failure")
         shutil.copyfile(args.package, destination)
 
