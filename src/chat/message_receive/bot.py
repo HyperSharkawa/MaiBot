@@ -314,11 +314,11 @@ class ChatBot:
             # 命令处理 - 使用新插件系统检查并处理命令
             is_command, cmd_result, continue_process = await self._process_commands(message)
 
-            if receipt is not None:
-                await receipt.wait_until_publishable()
-
             # 如果是命令且不需要继续处理，则直接返回
             if is_command and not continue_process:
+                # 命令已经执行，但其记录仍须遵守图片之后的入库边界。
+                if receipt is not None:
+                    await receipt.wait_until_publishable()
                 await MessageStorage.store_message(message, chat)
                 logger.info(f"命令处理完成，跳过后续消息处理: {cmd_result}")
                 return
@@ -328,6 +328,10 @@ class ChatBot:
                 return
             if modified_message and modified_message._modify_flags.modify_plain_text:
                 message.processed_plain_text = modified_message.plain_text
+
+            # 事件型插件可以即时响应；普通聊天的上下文发布与入库仍等待较早图片。
+            if receipt is not None:
+                await receipt.wait_until_publishable()
 
             # 确认从接口发来的message是否有自定义的prompt模板信息
             if message.message_info.template_info and not message.message_info.template_info.template_default:
